@@ -52,6 +52,10 @@
 #include "playerbot/PlayerbotAI.h"
 #endif
 
+#ifdef ENABLE_MODULES
+#include "ModuleMgr.h"
+#endif
+
 extern pEffect SpellEffects[MAX_SPELL_EFFECTS];
 
 class PrioritizeManaUnitWraper
@@ -1353,6 +1357,10 @@ void Spell::DoAllEffectOnTarget(TargetInfo* target)
             // traps need to be procced at trap triggerer
             Unit::ProcDamageAndSpell(ProcSystemArguments(affectiveCaster, procAttacker & PROC_FLAG_ON_TRAP_ACTIVATION ? m_targets.getUnitTarget() : unit, affectiveCaster ? procAttacker : uint32(PROC_FLAG_NONE), procVictim, procEx, 0, 0, m_attackType, m_spellInfo, this));
     }
+
+#ifdef ENABLE_MODULES
+    sModuleMgr.OnHit(this, (Unit*)caster, unitTarget);
+#endif
 
     OnAfterHit();
 
@@ -3582,6 +3590,10 @@ SpellCastResult Spell::cast(bool skipCheck)
 
     OnCast();
 
+#ifdef ENABLE_MODULES
+    sModuleMgr.OnCast(this, m_caster, m_targets.getUnitTarget());
+#endif
+
     if (!m_IsTriggeredSpell && !m_trueCaster->IsGameObject() && !m_spellInfo->HasAttribute(SPELL_ATTR_EX2_NOT_AN_ACTION))
         m_caster->RemoveAurasOnCast(AURA_INTERRUPT_FLAG_ACTION_LATE, m_spellInfo);
 
@@ -3899,13 +3911,19 @@ void Spell::SetCastItem(Item* item)
         m_itemCastSpell = true;
 }
 
+ItemPrototype const* Spell::GetCooldownItemPrototype() const
+{
+    return m_CastItem ? m_CastItem->GetProto() : nullptr;
+}
+
 void Spell::SendSpellCooldown()
 {
+    ItemPrototype const* cooldownItem = GetCooldownItemPrototype();
     // (SPELL_ATTR_DISABLED_WHILE_ACTIVE) have infinity cooldown, (SPELL_ATTR_PASSIVE) passive cooldown at triggering
     if (m_spellInfo->HasAttribute(SPELL_ATTR_PASSIVE) || m_channelOnly)
         return;
 
-    m_trueCaster->AddCooldown(*m_spellInfo, m_CastItem ? m_CastItem->GetProto() : nullptr, m_spellInfo->HasAttribute(SPELL_ATTR_COOLDOWN_ON_EVENT));
+    m_trueCaster->AddCooldown(*m_spellInfo, cooldownItem, m_spellInfo->HasAttribute(SPELL_ATTR_COOLDOWN_ON_EVENT));
 }
 
 void Spell::update(uint32 difftime)

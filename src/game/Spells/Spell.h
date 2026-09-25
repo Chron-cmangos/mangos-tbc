@@ -581,6 +581,9 @@ class Spell
         // void HandleAddAura(Unit* Target);
 
         void SetCastItem(Item* item);
+
+        // Item-free bot casts still need the native item cooldown metadata.
+        virtual ItemPrototype const* GetCooldownItemPrototype() const;
         Item* GetCastItem() { return m_CastItem; }
 
         SpellEntry const* m_spellInfo;
