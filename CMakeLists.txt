@@ -94,7 +94,7 @@ if(BUILD_MODULES)
 
   FetchContent_Declare(
     modules
-    GIT_REPOSITORY "https://github.com/davidonete/cmangos-modules.git"
+    GIT_REPOSITORY "https://github.com/Chron-cmangos/cmangos-modules.git"
     GIT_TAG "main"
   )
 
