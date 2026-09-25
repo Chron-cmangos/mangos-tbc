@@ -66,10 +66,8 @@ namespace Movement
 
         // there is a big chance that current position is unknown if current state is not finalized, need compute it
         // this also allows calculate spline position and update map position in much greater intervals
-        if (!move_spline.Finalized() && !transportInfo)
+        if (!move_spline.Finalized())
             real_position = move_spline.ComputePosition();
-        else if (!transportInfo && !transport)
-            real_position.z -= unit.GetHoverOffset(); // ground-relative; hover is reapplied in UpdateSplinePosition
 
         bool pathEmpty = false;
         if (args.path.empty())
@@ -111,7 +109,6 @@ namespace Movement
 
         unit.m_movementInfo.SetMovementFlags(MovementFlags(moveFlags));
         move_spline.Initialize(args);
-        unit.SetLastSplineStepTime();
 
         WorldPacket data(SMSG_MONSTER_MOVE, 64);
         data << unit.GetPackGUID();
