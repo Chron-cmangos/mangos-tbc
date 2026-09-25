@@ -30,6 +30,10 @@
 #include "Spells/SpellAuras.h"
 #include "Loot/LootMgr.h"
 
+#ifdef ENABLE_MODULES
+#include "ModuleMgr.h"
+#endif
+
 void WorldSession::HandleUseItemOpcode(WorldPacket& recvPacket)
 {
     uint8 bagIndex, slot;
@@ -161,6 +165,11 @@ void WorldSession::HandleUseItemOpcode(WorldPacket& recvPacket)
             Spell::SendCastResult(_player, spellInfo, cast_count, SPELL_FAILED_BAD_TARGETS);
         return;
     }
+
+#ifdef ENABLE_MODULES
+    if (sModuleMgr.OnUseItem(pUser, pItem))
+        return;
+#endif
 
     // Note: If script stop casting it must send appropriate data to client to prevent stuck item in gray state.
     if (!sScriptDevAIMgr.OnItemUse(pUser, pItem, targets))

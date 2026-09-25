@@ -31,6 +31,10 @@
 #include <sstream>
 #include <iomanip>
 
+#ifdef ENABLE_MODULES
+#include "ModuleMgr.h"
+#endif
+
 INSTANTIATE_SINGLETON_1(LootMgr);
 
 static eConfigFloatValues const qualityToRate[MAX_ITEM_QUALITY] =
@@ -902,7 +906,12 @@ void GroupLootRoll::Finish(RollVoteMap::const_iterator& winnerItr)
         Player* plr = sObjectMgr.GetPlayer(winnerItr->first);
         if (plr && plr->GetSession())
         {
+#ifdef ENABLE_MODULES
+            InventoryResult msg = m_loot->SendItem(plr, m_itemSlot);
+            sModuleMgr.OnPlayerWinRoll(m_loot, plr, winnerItr->second.vote, winnerItr->second.number, m_itemSlot, msg);
+#else
             m_loot->SendItem(plr, m_itemSlot);
+#endif
         }
         else
         {
@@ -936,6 +945,10 @@ void Loot::AddItem(LootStoreItem const& item)
             m_haveItemOverThreshold = true;
 
         m_lootItems.push_back(lootItem);
+
+#ifdef ENABLE_MODULES
+        sModuleMgr.OnAddItem(this, lootItem);
+#endif
     }
 }
 
@@ -951,6 +964,10 @@ void Loot::AddItem(uint32 itemid, uint32 count, uint32 randomSuffix, int32 rando
         // add permission to pick this item to loot owner
         for (auto allowedGuid : m_ownerSet)
             lootItem->allowedGuid.emplace(allowedGuid);
+
+#ifdef ENABLE_MODULES
+        sModuleMgr.OnAddItem(this, lootItem);
+#endif
     }
 }
 
@@ -961,6 +978,10 @@ bool Loot::FillLoot(uint32 loot_id, LootStore const& store, Player* lootOwner, b
     if (!lootOwner)
         return false;
 
+#ifdef ENABLE_MODULES
+    if (!sModuleMgr.OnFillLoot(this, lootOwner))
+    {
+#endif
     LootTemplate const* tab = store.GetLootFor(loot_id);
 
     if (!tab)
@@ -973,6 +994,9 @@ bool Loot::FillLoot(uint32 loot_id, LootStore const& store, Player* lootOwner, b
     m_lootItems.reserve(MAX_NR_LOOT_ITEMS);
 
     tab->Process(*this, lootOwner, store.IsRatesAllowed()); // Processing is done there, callback via Loot::AddItem()
+#ifdef ENABLE_MODULES
+    }
+#endif
 
     // fill the loot owners right here so its impossible from this point to change loot result
     Player* masterLooter = nullptr;
@@ -1171,6 +1195,11 @@ void Loot::NotifyMoneyRemoved()
 
 void Loot::GenerateMoneyLoot(uint32 minAmount, uint32 maxAmount)
 {
+#ifdef ENABLE_MODULES
+    if (sModuleMgr.OnGenerateMoneyLoot(this, m_gold))
+        return;
+#endif
+
     if (maxAmount > 0)
     {
         if (maxAmount <= minAmount)
@@ -2045,6 +2074,10 @@ InventoryResult Loot::SendItem(Player* target, LootItem* lootItem, bool sendErro
         {
             Item* newItem = target->StoreNewItem(dest, lootItem->itemId, true, lootItem->randomPropertyId);
 
+#ifdef ENABLE_MODULES
+            sModuleMgr.OnStoreItem(target, this, newItem);
+#endif
+
             if (lootItem->freeForAll)
             {
                 NotifyItemRemoved(target, lootItem->lootSlot);
@@ -2315,6 +2348,11 @@ void Loot::SendGold(Player* player)
                 item->SetLootState(ITEM_LOOT_CHANGED);
         }
     }
+
+#ifdef ENABLE_MODULES
+    sModuleMgr.OnSendGold(this, player, m_gold, m_lootMethod);
+#endif
+
     m_gold = 0;
 
     // animation update is done in Release if needed.
@@ -3066,6 +3104,10 @@ void LootMgr::PlayerVote(Player* player, ObjectGuid const& lootTargetGuid, uint3
     }
 
     roll->PlayerVote(player, vote);
+
+#ifdef ENABLE_MODULES
+    sModuleMgr.OnPlayerRoll(loot, player, itemSlot, vote);
+#endif
 }
 
 // Get loot by object guid
