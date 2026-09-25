@@ -343,7 +343,8 @@ Unit::Unit() :
     m_ignoreRangedTargets(false),
     m_auraUpdateMask(0),
     m_isMountOverriden(false), m_overridenMountId(0),
-    m_hasPeriodicAura(false)
+    m_hasPeriodicAura(false),
+    m_lastSplineStepTime(0)
 {
     m_objectType |= TYPEMASK_UNIT;
     m_objectTypeId = TYPEID_UNIT;
@@ -9094,7 +9095,7 @@ void Unit::SetDeathState(DeathState s)
         RemoveMiniPet();
         UnsummonAllTotems();
 
-        StopMoving();
+        InterruptMoving();
         i_motionMaster.Clear(false, true);
         if (!CanFly() || !i_motionMaster.MoveFall())
             i_motionMaster.MoveIdle();
@@ -10498,34 +10499,80 @@ void Unit::SendPetDismiss(uint32 soundId) const
 
 ///----------End of Pet responses methods----------
 
+void Unit::StepMoveSpline()
+{
+    // Client steps every frame. We only tick in Unit::Update; catch up on stop.
+    enum { MAX_STEP_MS = 5000 };
+
+    if (movespline->Finalized())
+        return;
+
+    uint32 msec = 0;
+    if (m_lastSplineStepTime)
+    {
+        msec = WorldTimer::getMSTimeDiff(m_lastSplineStepTime, WorldTimer::getMSTime());
+        if (msec > MAX_STEP_MS)
+            msec = MAX_STEP_MS;
+    }
+
+    if (msec)
+    {
+        movespline->updateState(msec);
+        SetLastSplineStepTime();
+    }
+
+    UpdateSplinePosition(true);
+    CalcZForCurrentSpecialSpline();
+}
+
+void Unit::CalcZForCurrentSpecialSpline()
+{
+    // Navmesh sits a few inches above ADT. Client rests the model after a stop.
+    if (!IsInWorld())
+        return;
+    if (CanFly() || IsFlying() || IsLevitating() || hasUnitState(UNIT_STAT_PROPELLED))
+        return;
+    if (m_movementInfo.HasMovementFlag(MovementFlags(MOVEFLAG_FALLING | MOVEFLAG_FALLINGFAR | MOVEFLAG_SWIMMING)))
+        return;
+
+    float x = GetPositionX();
+    float y = GetPositionY();
+    float z = GetPositionZ();
+    float splineZ = z;
+    UpdateAllowedPositionZ(x, y, z);
+
+    float dz = fabs(z - splineZ);
+    if (dz > 0.001f && dz < 0.5f)
+        Relocate(x, y, z, GetOrientation());
+}
+
 void Unit::StopMoving(bool forceSendStop /*=false*/)
 {
     if (IsStopped() && !forceSendStop)
         return;
 
+    bool splineActive = !movespline->Finalized();
+    if (splineActive)
+        StepMoveSpline();
+
     clearUnitState(UNIT_STAT_MOVING);
 
-    // not need send any packets if not in world
     if (!IsInWorld())
+    {
+        // No packet. Don't leave the spline running for Unit::Update.
+        if (!movespline->Finalized())
+            movespline->_Interrupt();
         return;
+    }
 
+    // Catch-up may finish the spline; Stop() ignores a done spline unless forced.
     Movement::MoveSplineInit init(*this);
-    init.Stop(forceSendStop);
+    init.Stop(forceSendStop || splineActive);
 }
 
 void Unit::InterruptMoving(bool forceSendStop /*=false*/)
 {
-    bool isMoving = false;
-
-    if (!movespline->Finalized())
-    {
-        UpdateSplinePosition(true);
-
-        movespline->_Interrupt();
-        isMoving = true;
-    }
-
-    StopMoving(forceSendStop || isMoving);
+    StopMoving(forceSendStop || !movespline->Finalized());
 }
 
 bool Unit::SetConfused(bool apply, ObjectGuid casterGuid, uint32 spellID)
@@ -11661,6 +11708,7 @@ void Unit::UpdateSplineMovement(uint32 t_diff)
     }, 1000);
 #endif
     movespline->updateState(t_diff);
+    SetLastSplineStepTime();
     bool arrived = movespline->Finalized();
 
     if (arrived)
@@ -11683,6 +11731,8 @@ void Unit::UpdateSplinePosition(bool relocateOnly)
         m_movementInfo.UpdateTransportData(pos);
         transport->CalculatePassengerPosition(pos.x, pos.y, pos.z, &pos.o);
     }
+
+    pos.z += GetHoverOffset(); // spline points are navmesh/ground; hover is applied on relocate
 
     bool faced = false;
     if (movespline->isFacing())
