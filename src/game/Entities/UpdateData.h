@@ -72,13 +72,13 @@ class UpdateData
 
         void SendData(WorldSession& session, bool forceSend = false);
 
+        static void Compress(void* dst, uint32* dst_size, void* src, int src_size);
+
     protected:
         GuidSet m_outOfRangeGUIDs;
         std::vector<BufferPair> m_data;
         uint32 m_currentIndex;
 
         std::vector<WorldPacket> m_afterCreatePacket;
-
-        static void Compress(void* dst, uint32* dst_size, void* src, int src_size);
 };
 #endif

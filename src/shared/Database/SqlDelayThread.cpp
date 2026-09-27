@@ -19,6 +19,9 @@
 #include "Database/SqlDelayThread.h"
 #include "Database/SqlOperations.h"
 #include "DatabaseEnv.h"
+#include "Config/Config.h"
+#include "Log/Log.h"
+#include "Util/Util.h"
 
 SqlDelayThread::SqlDelayThread(Database* db, SqlConnection* conn) : m_dbEngine(db), m_dbConnection(conn), m_running(true)
 {
@@ -81,10 +84,20 @@ void SqlDelayThread::ProcessRequests()
         sqlQueue = std::move(m_sqlQueue);
     }
 
+    const bool performanceLogging = sConfig.GetBoolDefault("PerformanceLog.Enabled", true);
+    const uint32 slowThreshold = static_cast<uint32>(std::max(1, sConfig.GetIntDefault("PerformanceLog.SlowAsyncDbMs", 100)));
+
     while (!sqlQueue.empty())
     {
         auto const s = std::move(sqlQueue.front());
         sqlQueue.pop();
+        const uint32 start = performanceLogging ? WorldTimer::getMSTime() : 0;
         s->Execute(m_dbConnection);
+        if (performanceLogging)
+        {
+            const uint32 elapsed = WorldTimer::getMSTimeDiff(start, WorldTimer::getMSTime());
+            if (elapsed >= slowThreshold)
+                sLog.outPerformance("SLOW_ASYNC_DB elapsed=%u ms remaining_queue=%u", elapsed, static_cast<uint32>(sqlQueue.size()));
+        }
     }
 }

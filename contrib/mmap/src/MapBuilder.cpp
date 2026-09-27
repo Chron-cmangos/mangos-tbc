@@ -1255,7 +1255,9 @@ namespace MMAP
 
     json MapBuilder::getTileConfig(uint32 mapId, uint32 tileX, uint32 tileY)
     {
-        std::string key = std::to_string(tileX) + std::to_string(tileY);
+        char keyBuffer[5];
+        snprintf(keyBuffer, sizeof(keyBuffer), "%02u%02u", tileX, tileY);
+        std::string key(keyBuffer);
 
         json config = getMapIdConfig(mapId);
         if (config.find(key) != config.end())

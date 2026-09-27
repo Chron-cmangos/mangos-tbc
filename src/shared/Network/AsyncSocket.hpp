@@ -24,6 +24,11 @@
 #include <boost/enable_shared_from_this.hpp>
 #include "boost/lexical_cast.hpp"
 #include "Log/Log.h"
+#include <deque>
+#include <functional>
+#include <memory>
+#include <mutex>
+#include <vector>
 
 namespace MaNGOS
 {
@@ -61,10 +66,20 @@ namespace MaNGOS
             std::string const& GetRemoteEndpoint() const { return m_remoteEndpoint; }
             std::string const& GetRemoteAddress() const { return m_address; }
         private:
+            struct PendingWrite
+            {
+                std::shared_ptr<std::vector<char>> data;
+                std::function<void(const boost::system::error_code&, std::size_t)> callback;
+            };
+
+            void QueueWrite(PendingWrite&& write);
+            void StartNextWrite();
             virtual bool ProcessIncomingData() = 0;
             virtual bool OnOpen() = 0;
 
             boost::asio::ip::tcp::socket m_socket;
+            boost::asio::strand<boost::asio::io_context::executor_type> m_writeStrand;
+            std::deque<PendingWrite> m_writeQueue;
 
             std::mutex m_closeMutex;
             std::string m_address;
@@ -74,7 +89,7 @@ namespace MaNGOS
     };
 
     template <typename SocketType>
-    MaNGOS::AsyncSocket<SocketType>::AsyncSocket(boost::asio::io_context& io_context) : m_socket(io_context), m_address("0.0.0.0"),
+    MaNGOS::AsyncSocket<SocketType>::AsyncSocket(boost::asio::io_context& io_context) : m_socket(io_context), m_writeStrand(boost::asio::make_strand(io_context)), m_address("0.0.0.0"),
         m_remoteAddress(boost::asio::ip::address()), m_remotePort(0)
     {
 
@@ -111,7 +126,60 @@ namespace MaNGOS
     template <typename SocketType>
     void MaNGOS::AsyncSocket<SocketType>::Write(const char* buffer, size_t length, std::function<void(const boost::system::error_code&, std::size_t)>&& callback)
     {
-        boost::asio::async_write(m_socket, boost::asio::buffer(buffer, length), callback);
+        PendingWrite write;
+        write.data = std::make_shared<std::vector<char>>(buffer, buffer + length);
+        write.callback = std::move(callback);
+
+        auto self = this->shared_from_this();
+        boost::asio::post(m_writeStrand, [self, write = std::move(write)]() mutable
+        {
+            static_cast<AsyncSocket<SocketType>*>(self.get())->QueueWrite(std::move(write));
+        });
+    }
+
+    template <typename SocketType>
+    void MaNGOS::AsyncSocket<SocketType>::QueueWrite(PendingWrite&& write)
+    {
+        if (IsClosed())
+        {
+            if (write.callback)
+                write.callback(boost::asio::error::operation_aborted, 0);
+            return;
+        }
+
+        bool const idle = m_writeQueue.empty();
+        m_writeQueue.emplace_back(std::move(write));
+        if (idle)
+            StartNextWrite();
+    }
+
+    template <typename SocketType>
+    void MaNGOS::AsyncSocket<SocketType>::StartNextWrite()
+    {
+        if (m_writeQueue.empty() || IsClosed())
+            return;
+
+        auto self = this->shared_from_this();
+        PendingWrite& write = m_writeQueue.front();
+        boost::asio::async_write(m_socket, boost::asio::buffer(*write.data),
+            boost::asio::bind_executor(m_writeStrand,
+                [self](const boost::system::error_code& error, std::size_t written)
+                {
+                    AsyncSocket<SocketType>* socket = static_cast<AsyncSocket<SocketType>*>(self.get());
+                    PendingWrite completed = std::move(socket->m_writeQueue.front());
+                    socket->m_writeQueue.pop_front();
+                    if (completed.callback)
+                        completed.callback(error, written);
+
+                    if (error)
+                    {
+                        socket->m_writeQueue.clear();
+                        socket->Close();
+                        return;
+                    }
+
+                    socket->StartNextWrite();
+                }));
     }
 
     template <typename SocketType>

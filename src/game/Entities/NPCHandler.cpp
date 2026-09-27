@@ -518,9 +518,7 @@ void WorldSession::SendStablePet(ObjectGuid guid) const
     data << uint8(GetPlayer()->m_stableSlots);
 
     uint8 num = 0;                                          // counter for place holder
-    PetSaveMode firstSlot = PET_SAVE_FIRST_STABLE_SLOT;     // have to be changed to PET_SAVE_AS_CURRENT if pet is currently temp unsummoned
-
-    // not let move dead pet in slot
+    // Send the summoned hunter pet when it is alive.
     if (pet && pet->IsAlive() && pet->getPetType() == HUNTER_PET)
     {
         data << uint32(pet->GetCharmInfo()->GetPetNumber());
@@ -533,35 +531,30 @@ void WorldSession::SendStablePet(ObjectGuid guid) const
     }
     else
     {
-        if(_player->GetTemporaryUnsummonedPetNumber()) // temporary unsummon - mount
-            firstSlot = PET_SAVE_AS_CURRENT;
-        else
+        // A dismissed, temporarily unsummoned, or dead pet still occupies the
+        // current-pet position from the stable master's point of view.
+        auto currentPet = CharacterDatabase.PQuery(
+            "SELECT id, entry, level, name, loyalty FROM character_pet "
+            "WHERE owner = '%u' AND (slot = '%u' OR slot = '%u') "
+            "ORDER BY slot LIMIT 1",
+            _player->GetGUIDLow(), uint32(PET_SAVE_AS_CURRENT), uint32(PET_SAVE_NOT_IN_SLOT));
+
+        if (currentPet)
         {
-            auto queryResult = CharacterDatabase.PQuery("SELECT owner, id, entry, level, name, loyalty FROM character_pet WHERE owner = '%u' AND slot = '%u' ORDER BY slot",
-                _player->GetGUIDLow(), uint32(PET_SAVE_NOT_IN_SLOT));
-
-            if (queryResult) // dismissed pet
-            {
-                do
-                {
-                    Field* fields = queryResult->Fetch();
-
-                    data << uint32(fields[1].GetUInt32());          // petnumber
-                    data << uint32(fields[2].GetUInt32());          // creature entry
-                    data << uint32(fields[3].GetUInt32());          // level
-                    data << fields[4].GetString();                  // name
-                    data << uint32(fields[5].GetUInt32());          // loyalty
-                    data << uint8(0x03);                            // slot
-
-                    ++num;
-                } while (queryResult->NextRow());
-            }
+            Field* fields = currentPet->Fetch();
+            data << uint32(fields[0].GetUInt32());          // petnumber
+            data << uint32(fields[1].GetUInt32());          // creature entry
+            data << uint32(fields[2].GetUInt32());          // level
+            data << fields[3].GetString();                  // name
+            data << uint32(fields[4].GetUInt32());          // loyalty
+            data << uint8(0x01);                            // client current-pet slot
+            ++num;
         }
     }
 
     //                                                  0      1     2   3      4      5        6
     auto queryResult = CharacterDatabase.PQuery("SELECT owner, slot, id, entry, level, loyalty, name FROM character_pet WHERE owner = '%u' AND slot >= '%u' AND slot <= '%u' ORDER BY slot",
-                          _player->GetGUIDLow(), uint32(firstSlot), uint32(PET_SAVE_LAST_STABLE_SLOT));
+                          _player->GetGUIDLow(), uint32(PET_SAVE_FIRST_STABLE_SLOT), uint32(PET_SAVE_LAST_STABLE_SLOT));
 
     if (queryResult)
     {
@@ -638,39 +631,33 @@ void WorldSession::HandleStablePet(WorldPacket& recv_data)
 
     Pet* pet = _player->GetPet();
 
-    // can't place in stable dead pet
+    // A dead hunter pet can be stabled. It remains dead in the database and
+    // can be revived after it is made current again.
     if (pet)
     {
-        bool stop = false;
-        if (!pet->IsAlive())
-        {
-            _player->SendPetTameFailure(PETTAME_DEAD);
-            stop = true;
-        }
-
-        if (!stop && pet->getPetType() != HUNTER_PET)
+        if (pet->getPetType() != HUNTER_PET)
         {
             _player->SendPetTameFailure(PETTAME_INVALIDCREATURE);
-            stop = true;
-        }
-
-        if (stop)
-        {
             SendStableResult(STABLE_ERR_STABLE);
             return;
         }
     }
     else
     {
-        SpellCastResult loadResult = Pet::TryLoadFromDB(_player, 0, 0, _player->GetTemporaryUnsummonedPetNumber() != 0, HUNTER_PET);
-        if (loadResult != SPELL_CAST_OK)
+        auto currentPet = CharacterDatabase.PQuery(
+            "SELECT id, entry FROM character_pet WHERE owner = '%u' "
+            "AND (slot = '%u' OR slot = '%u') ORDER BY slot LIMIT 1",
+            _player->GetGUIDLow(), uint32(PET_SAVE_AS_CURRENT), uint32(PET_SAVE_NOT_IN_SLOT));
+        if (!currentPet)
         {
-            if (loadResult == SPELL_FAILED_TARGETS_DEAD)
-                _player->SendPetTameFailure(PETTAME_DEAD);
+            SendStableResult(STABLE_ERR_STABLE);
+            return;
+        }
 
-            if (loadResult == SPELL_FAILED_BAD_TARGETS)
-                _player->SendPetTameFailure(PETTAME_INVALIDCREATURE);
-
+        CreatureInfo const* creatureInfo = ObjectMgr::GetCreatureTemplate(currentPet->Fetch()[1].GetUInt32());
+        if (!creatureInfo || !creatureInfo->isTameable())
+        {
+            _player->SendPetTameFailure(PETTAME_INVALIDCREATURE);
             SendStableResult(STABLE_ERR_STABLE);
             return;
         }
@@ -704,11 +691,20 @@ void WorldSession::HandleStablePet(WorldPacket& recv_data)
             pet->Unsummon(PetSaveMode(free_slot), _player);
         else
         {
-            // change pet slot directly in database
+            auto currentPet = CharacterDatabase.PQuery(
+                "SELECT id FROM character_pet WHERE owner = '%u' "
+                "AND (slot = '%u' OR slot = '%u') ORDER BY slot LIMIT 1",
+                _player->GetGUIDLow(), uint32(PET_SAVE_AS_CURRENT), uint32(PET_SAVE_NOT_IN_SLOT));
+            if (!currentPet)
+            {
+                SendStableResult(STABLE_ERR_STABLE);
+                return;
+            }
+
             CharacterDatabase.BeginTransaction();
             static SqlStatementID ChangePetSlot_ID;
-            SqlStatement ChangePetSlot = CharacterDatabase.CreateStatement(ChangePetSlot_ID, "UPDATE character_pet SET slot = ? WHERE owner = ? AND slot = ? ");
-            ChangePetSlot.PExecute(free_slot, _player->GetObjectGuid().GetCounter(), uint32(_player->GetTemporaryUnsummonedPetNumber() ? PET_SAVE_AS_CURRENT : PET_SAVE_NOT_IN_SLOT));
+            SqlStatement ChangePetSlot = CharacterDatabase.CreateStatement(ChangePetSlot_ID, "UPDATE character_pet SET slot = ? WHERE owner = ? AND id = ?");
+            ChangePetSlot.PExecute(free_slot, _player->GetGUIDLow(), currentPet->Fetch()[0].GetUInt32());
             CharacterDatabase.CommitTransaction();
         }
         SendStableResult(STABLE_SUCCESS_STABLE);
@@ -734,26 +730,21 @@ void WorldSession::HandleUnstablePet(WorldPacket& recv_data)
 
     uint32 creature_id = 0;
     uint32 slot = 0;
+    uint32 currentHealth = 0;
 
-    auto queryResult = CharacterDatabase.PQuery("SELECT entry, slot FROM character_pet WHERE owner = '%u' AND id = '%u' AND slot >='%u' AND slot <= '%u'",
+    auto queryResult = CharacterDatabase.PQuery("SELECT entry, slot, curhealth FROM character_pet WHERE owner = '%u' AND id = '%u' AND slot >= '%u' AND slot <= '%u'",
                           _player->GetGUIDLow(), petnumber, PET_SAVE_FIRST_STABLE_SLOT, PET_SAVE_LAST_STABLE_SLOT);
     if (queryResult)
     {
         Field* fields = queryResult->Fetch();
         creature_id   = fields[0].GetUInt32();
         slot          = fields[1].GetUInt32();
+        currentHealth = fields[2].GetUInt32();
     }
 
     if (!creature_id)
     {
         sLog.outError("HandleUnstablePet> %s trying to unstable a pet with invalid creature id!", _player->GetGuidStr().c_str());
-        SendStableResult(STABLE_ERR_STABLE);
-        return;
-    }
-
-    if (slot == uint32(PET_SAVE_AS_CURRENT))
-    {
-        sLog.outError("HandleUnstablePet> %s trying to unstable current pet!", _player->GetGuidStr().c_str());
         SendStableResult(STABLE_ERR_STABLE);
         return;
     }
@@ -765,25 +756,14 @@ void WorldSession::HandleUnstablePet(WorldPacket& recv_data)
         return;
     }
 
-    // found if a pet is actually summoned
+    // Swap the summoned pet into the selected stable slot. Dead hunter pets
+    // are valid here; their saved health remains zero.
     Pet* pet = _player->GetPet();
     if (pet)
     {
-        bool stop = false;
-        if (!pet->IsAlive())
-        {
-            _player->SendPetTameFailure(PETTAME_DEAD);
-            stop = true;
-        }
-
-        if (!stop && pet->getPetType() != HUNTER_PET)
+        if (pet->getPetType() != HUNTER_PET)
         {
             _player->SendPetTameFailure(PETTAME_ANOTHERSUMMONACTIVE);
-            stop = true;
-        }
-
-        if (stop)
-        {
             SendStableResult(STABLE_ERR_STABLE);
             return;
         }
@@ -792,35 +772,52 @@ void WorldSession::HandleUnstablePet(WorldPacket& recv_data)
     }
     else
     {
-        // try to find if pet is actually temporary unsummoned
-        SpellCastResult loadResult = Pet::TryLoadFromDB(_player, 0, 0, _player->GetTemporaryUnsummonedPetNumber() != 0, HUNTER_PET);
-        if (loadResult != SPELL_CAST_OK)
+        // A dismissed/dead current pet must be moved into the stable slot
+        // before the selected pet becomes current, otherwise loading the new
+        // pet can delete the old NOT_IN_SLOT row.
+        auto currentPet = CharacterDatabase.PQuery(
+            "SELECT id, entry FROM character_pet WHERE owner = '%u' "
+            "AND (slot = '%u' OR slot = '%u') ORDER BY slot LIMIT 1",
+            _player->GetGUIDLow(), uint32(PET_SAVE_AS_CURRENT), uint32(PET_SAVE_NOT_IN_SLOT));
+
+        CharacterDatabase.BeginTransaction();
+        if (currentPet)
         {
-            if (loadResult == SPELL_FAILED_TARGETS_DEAD)
+            Field* currentFields = currentPet->Fetch();
+            CreatureInfo const* currentInfo = ObjectMgr::GetCreatureTemplate(currentFields[1].GetUInt32());
+            if (!currentInfo || !currentInfo->isTameable())
             {
-                _player->SendPetTameFailure(PETTAME_DEAD);
-
-                sLog.outError("UnStablePet> trying to unstable a dead pet. Should not be possible!");
-                return;
-            }
-
-            if (loadResult == SPELL_FAILED_BAD_TARGETS)
-            {
-                _player->SendPetTameFailure(PETTAME_ANOTHERSUMMONACTIVE);
+                CharacterDatabase.RollbackTransaction();
                 SendStableResult(STABLE_ERR_STABLE);
                 return;
             }
+
+            static SqlStatementID MoveCurrentPet_ID;
+            SqlStatement moveCurrent = CharacterDatabase.CreateStatement(MoveCurrentPet_ID, "UPDATE character_pet SET slot = ? WHERE owner = ? AND id = ?");
+            moveCurrent.PExecute(slot, _player->GetGUIDLow(), currentFields[0].GetUInt32());
         }
-        else
+        static SqlStatementID MakeSelectedPetCurrent_ID;
+        SqlStatement makeCurrent = CharacterDatabase.CreateStatement(MakeSelectedPetCurrent_ID, "UPDATE character_pet SET slot = ? WHERE owner = ? AND id = ?");
+        makeCurrent.PExecute(uint32(currentHealth ? PET_SAVE_AS_CURRENT : PET_SAVE_NOT_IN_SLOT), _player->GetGUIDLow(), petnumber);
+        CharacterDatabase.CommitTransaction();
+        _player->SetTemporaryUnsummonedPetNumber(0);
+    }
+
+    // A dead selected pet is made current in the database but is not spawned.
+    // The hunter can revive it through the normal pet-revive flow.
+    if (!currentHealth)
+    {
+        if (pet)
         {
-            // change pet slot directly in database
             CharacterDatabase.BeginTransaction();
-            static SqlStatementID ChangePetSlot_ID;
-            SqlStatement ChangePetSlot = CharacterDatabase.CreateStatement(ChangePetSlot_ID, "UPDATE character_pet SET slot = ? WHERE owner = ? AND slot = ? ");
-            ChangePetSlot.PExecute(slot, _player->GetObjectGuid().GetCounter(), uint32(_player->GetTemporaryUnsummonedPetNumber() ? PET_SAVE_AS_CURRENT : PET_SAVE_NOT_IN_SLOT));
+            static SqlStatementID MakeDeadPetCurrent_ID;
+            SqlStatement makeDeadCurrent = CharacterDatabase.CreateStatement(MakeDeadPetCurrent_ID, "UPDATE character_pet SET slot = ? WHERE owner = ? AND id = ?");
+            makeDeadCurrent.PExecute(uint32(PET_SAVE_NOT_IN_SLOT), _player->GetGUIDLow(), petnumber);
             CharacterDatabase.CommitTransaction();
-            _player->SetTemporaryUnsummonedPetNumber(0);
         }
+
+        SendStableResult(STABLE_SUCCESS_UNSTABLE);
+        return;
     }
 
     Pet* newpet = new Pet(HUNTER_PET);
@@ -838,6 +835,8 @@ void WorldSession::HandleUnstablePet(WorldPacket& recv_data)
         }
     }
 
+    if (newpet)
+        SendPetNameQuery(newpet->GetObjectGuid(), newpet->GetCharmInfo()->GetPetNumber());
     SendStableResult(STABLE_SUCCESS_UNSTABLE);
 }
 
@@ -890,46 +889,17 @@ void WorldSession::HandleStableSwapPet(WorldPacket& recv_data)
     }
 
     Pet* pet = _player->GetPet();
-    if (pet)
+    if (pet && pet->getPetType() != HUNTER_PET)
     {
-        bool stop = false;
-        if (!pet->IsAlive())
-        {
-            _player->SendPetTameFailure(PETTAME_DEAD);
-            stop = true;
-        }
-
-        if (!stop && pet->getPetType() != HUNTER_PET)
-        {
-            _player->SendPetTameFailure(PETTAME_INVALIDCREATURE);
-            stop = true;
-        }
-
-        if (stop)
-        {
-            SendStableResult(STABLE_ERR_STABLE);
-            return;
-        }
-    }
-    else
-    {
-        SpellCastResult loadResult = Pet::TryLoadFromDB(_player, 0, 0, _player->GetTemporaryUnsummonedPetNumber() != 0, HUNTER_PET);
-        if (loadResult != SPELL_CAST_OK)
-        {
-            if (loadResult == SPELL_FAILED_TARGETS_DEAD)
-                _player->SendPetTameFailure(PETTAME_DEAD);
-
-            if (loadResult == SPELL_FAILED_BAD_TARGETS)
-                _player->SendPetTameFailure(PETTAME_INVALIDCREATURE);
-
-            SendStableResult(STABLE_ERR_STABLE);
-            return;
-        }
+        _player->SendPetTameFailure(PETTAME_INVALIDCREATURE);
+        SendStableResult(STABLE_ERR_STABLE);
+        return;
     }
 
-    // find swapped pet slot in stable
-    auto queryResult = CharacterDatabase.PQuery("SELECT slot,entry FROM character_pet WHERE owner = '%u' AND id = '%u'",
-                          _player->GetGUIDLow(), pet_number);
+    // Find the selected stable pet, including its saved health so a dead pet
+    // can become current without trying to spawn a dead Unit.
+    auto queryResult = CharacterDatabase.PQuery("SELECT slot, entry, curhealth FROM character_pet WHERE owner = '%u' AND id = '%u' AND slot >= '%u' AND slot <= '%u'",
+                          _player->GetGUIDLow(), pet_number, PET_SAVE_FIRST_STABLE_SLOT, PET_SAVE_LAST_STABLE_SLOT);
     if (!queryResult)
     {
         SendStableResult(STABLE_ERR_STABLE);
@@ -940,6 +910,7 @@ void WorldSession::HandleStableSwapPet(WorldPacket& recv_data)
 
     uint32 slot        = fields[0].GetUInt32();
     uint32 creature_id = fields[1].GetUInt32();
+    uint32 currentHealth = fields[2].GetUInt32();
 
     if (!creature_id)
     {
@@ -954,24 +925,63 @@ void WorldSession::HandleStableSwapPet(WorldPacket& recv_data)
         return;
     }
 
-    // move alive pet to slot or delete dead pet
+    // Move the current pet into the selected pet's stable slot. This is valid
+    // for both alive and dead hunter pets.
     if (pet)
         pet->Unsummon(PetSaveMode(slot), _player);
     else
     {
-        // change pet slot directly in memory
+        auto currentPet = CharacterDatabase.PQuery(
+            "SELECT id, entry FROM character_pet WHERE owner = '%u' "
+            "AND (slot = '%u' OR slot = '%u') ORDER BY slot LIMIT 1",
+            _player->GetGUIDLow(), uint32(PET_SAVE_AS_CURRENT), uint32(PET_SAVE_NOT_IN_SLOT));
+        if (!currentPet)
+        {
+            SendStableResult(STABLE_ERR_STABLE);
+            return;
+        }
+
+        Field* currentFields = currentPet->Fetch();
+        CreatureInfo const* currentInfo = ObjectMgr::GetCreatureTemplate(currentFields[1].GetUInt32());
+        if (!currentInfo || !currentInfo->isTameable())
+        {
+            SendStableResult(STABLE_ERR_STABLE);
+            return;
+        }
+
         CharacterDatabase.BeginTransaction();
-        static SqlStatementID ChangePetSlot_ID;
-        SqlStatement ChangePetSlot = CharacterDatabase.CreateStatement(ChangePetSlot_ID, "UPDATE character_pet SET slot = ? WHERE owner = ? AND slot = ? ");
-        ChangePetSlot.PExecute(slot, _player->GetObjectGuid().GetCounter(), uint32(_player->GetTemporaryUnsummonedPetNumber() ? PET_SAVE_AS_CURRENT : PET_SAVE_NOT_IN_SLOT));
+        static SqlStatementID MoveCurrentPet_ID;
+        SqlStatement moveCurrent = CharacterDatabase.CreateStatement(MoveCurrentPet_ID, "UPDATE character_pet SET slot = ? WHERE owner = ? AND id = ?");
+        moveCurrent.PExecute(slot, _player->GetGUIDLow(), currentFields[0].GetUInt32());
+
+        static SqlStatementID MakeSelectedPetCurrent_ID;
+        SqlStatement makeCurrent = CharacterDatabase.CreateStatement(MakeSelectedPetCurrent_ID, "UPDATE character_pet SET slot = ? WHERE owner = ? AND id = ?");
+        makeCurrent.PExecute(uint32(currentHealth ? PET_SAVE_AS_CURRENT : PET_SAVE_NOT_IN_SLOT), _player->GetGUIDLow(), pet_number);
         CharacterDatabase.CommitTransaction();
+        _player->SetTemporaryUnsummonedPetNumber(0);
     }
 
-    // summon unstabled pet
-    Pet* newpet = new Pet;
+    if (!currentHealth)
+    {
+        if (pet)
+        {
+            CharacterDatabase.BeginTransaction();
+            static SqlStatementID MakeDeadPetCurrent_ID;
+            SqlStatement makeDeadCurrent = CharacterDatabase.CreateStatement(MakeDeadPetCurrent_ID, "UPDATE character_pet SET slot = ? WHERE owner = ? AND id = ?");
+            makeDeadCurrent.PExecute(uint32(PET_SAVE_NOT_IN_SLOT), _player->GetGUIDLow(), pet_number);
+            CharacterDatabase.CommitTransaction();
+        }
+
+        SendStableResult(STABLE_SUCCESS_UNSTABLE);
+        return;
+    }
+
+    // Summon the selected living pet.
+    Pet* newpet = new Pet(HUNTER_PET);
     if (!newpet->LoadPetFromDB(_player, newpet->GetPetSpawnPosition(_player), creature_id, pet_number))
     {
         delete newpet;
+        newpet = nullptr;
 
         // load failed but it may be normal if the pet is set as temporary unsummoned by any reason
         if (!_player->GetTemporaryUnsummonedPetNumber())
@@ -982,6 +992,8 @@ void WorldSession::HandleStableSwapPet(WorldPacket& recv_data)
         }
     }
 
+    if (newpet)
+        SendPetNameQuery(newpet->GetObjectGuid(), newpet->GetCharmInfo()->GetPetNumber());
     SendStableResult(STABLE_SUCCESS_UNSTABLE);
 }
 

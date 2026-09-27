@@ -34,6 +34,27 @@ class Transport;
 class BattleGround;
 struct TransportTemplate;
 
+enum ContinentPartition : uint32
+{
+    // Keep internal continent ids at the top of the character database's
+    // MEDIUMINT UNSIGNED range. Ordinary dungeon ids begin at one and can
+    // legitimately occupy the small values used by vMaNGOS.
+    MAP0_TOP_NORTH      = 0x00FFF001,
+    MAP0_MIDDLE_NORTH   = 0x00FFF002,
+    MAP0_IRONFORGE_AREA = 0x00FFF003,
+    MAP0_MIDDLE         = 0x00FFF004,
+    MAP0_STORMWIND_AREA = 0x00FFF005,
+    MAP0_SOUTH          = 0x00FFF006,
+
+    MAP1_NORTH          = 0x00FFF011,
+    MAP1_DUROTAR        = 0x00FFF012,
+    MAP1_UPPER_MIDDLE   = 0x00FFF013,
+    MAP1_LOWER_MIDDLE   = 0x00FFF014,
+    MAP1_VALLEY         = 0x00FFF015,
+    MAP1_ORGRIMMAR      = 0x00FFF016,
+    MAP1_SOUTH          = 0x00FFF017
+};
+
 struct MapID
 {
     explicit MapID(uint32 id) : nMapId(id), nInstanceId(0) {}
@@ -65,6 +86,9 @@ class MapManager : public MaNGOS::Singleton<MapManager, MaNGOS::ClassLevelLockab
         typedef std::map<MapID, MaNGOS::unique_trackable_ptr<Map> > MapMapType;
 
         void CreateContinents();
+        uint32 GetContinentInstanceId(uint32 mapId, float x, float y, bool* transitionArea = nullptr) const;
+        void ScheduleInstanceSwitch(Player* player, uint32 newInstanceId);
+        void SwitchPlayersInstances();
         Map* CreateMap(uint32, const WorldObject* obj);
         Map* CreateBgMap(uint32 mapid, uint32 instanceId, BattleGround* bg);
         Map* FindMap(uint32 mapid, uint32 instanceId = 0) const;
@@ -154,6 +178,7 @@ class MapManager : public MaNGOS::Singleton<MapManager, MaNGOS::ClassLevelLockab
         template<typename Check> inline WorldObject* SearchOnAllLoadedMap(Check& check);
         void DoForAllMaps(const std::function<void(Map*)>& worker);
         void DoForAllMapsWithMapId(uint32 mapId, const std::function<void(Map*)> worker);
+        MapUpdater& GetObjectUpdater() { return m_objectUpdater; }
 
     private:
 
@@ -179,10 +204,14 @@ class MapManager : public MaNGOS::Singleton<MapManager, MaNGOS::ClassLevelLockab
         std::mutex m_lock;
         uint32 i_gridCleanUpDelay;
         MapMapType i_maps;
+        std::map<MapID, uint32> m_emptyMapUpdateAccumulator;
         IntervalTimer i_timer;
 
         std::atomic<uint32> i_MaxInstanceId;
         MapUpdater m_updater;
+        MapUpdater m_objectUpdater;
+        std::mutex m_scheduledInstanceSwitchLock;
+        std::map<Player*, uint32> m_scheduledInstanceSwitches;
 };
 
 template<typename Check>

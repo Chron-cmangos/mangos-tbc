@@ -20,6 +20,9 @@
 #include "SqlDelayThread.h"
 #include "DatabaseEnv.h"
 #include "DatabaseImpl.h"
+#include "Config/Config.h"
+#include "Log/Log.h"
+#include "Util/Util.h"
 
 #include <cstdarg>
 
@@ -100,14 +103,31 @@ bool SqlQuery::Execute(SqlConnection* conn)
 
 void SqlResultQueue::Update()
 {
-    std::lock_guard<std::mutex> guard(m_mutex);
+    std::queue<std::unique_ptr<MaNGOS::IQueryCallback>> callbackQueue;
+    {
+        std::lock_guard<std::mutex> guard(m_mutex);
+        callbackQueue = std::move(m_queue);
+    }
+
+    const bool performanceLogging = sConfig.GetBoolDefault("PerformanceLog.Enabled", true);
+    const uint32 slowThreshold = static_cast<uint32>(std::max(1, sConfig.GetIntDefault("PerformanceLog.SlowDbCallbackMs", 50)));
+    const uint32 batchStart = performanceLogging ? WorldTimer::getMSTime() : 0;
+    uint32 callbackCount = 0;
 
     /// execute the callbacks waiting in the synchronization queue
-    while (!m_queue.empty())
+    while (!callbackQueue.empty())
     {
-        auto const callback = std::move(m_queue.front());
-        m_queue.pop();
+        auto const callback = std::move(callbackQueue.front());
+        callbackQueue.pop();
         callback->Execute();
+        ++callbackCount;
+    }
+
+    if (performanceLogging && callbackCount)
+    {
+        const uint32 elapsed = WorldTimer::getMSTimeDiff(batchStart, WorldTimer::getMSTime());
+        if (elapsed >= slowThreshold)
+            sLog.outPerformance("SLOW_DB_CALLBACK batch=%u elapsed=%u ms", callbackCount, elapsed);
     }
 }
 

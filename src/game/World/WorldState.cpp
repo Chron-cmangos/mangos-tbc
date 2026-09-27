@@ -683,7 +683,8 @@ void WorldState::HandleConditionStateChange(uint32 conditionId, uint32 state)
 
 Map* WorldState::GetMap(uint32 mapId, Position const& invZone)
 {
-    Map* map = sMapMgr.FindMap(mapId);
+    uint32 const instanceId = sMapMgr.GetContinentInstanceId(mapId, invZone.x, invZone.y);
+    Map* map = sMapMgr.FindMap(mapId, instanceId);
     if (!map)
         sLog.outError("ScourgeInvasionEvent::GetMap found no map with mapId %u, x: %f, y: %f.", mapId, invZone.x, invZone.y);
     return map;
@@ -1854,7 +1855,10 @@ void WorldState::HandleActiveZone(uint32 attackTimeVar, uint32 zoneId, uint32 re
 
     ScourgeInvasionData::InvasionZone& zone = m_siData.m_invasionPoints[zoneId];
 
-    Map* map = sMapMgr.FindMap(zone.map);
+    Map* map = GetMap(zone.map, zone.mouth[0]);
+
+    if (!map)
+        return;
 
     if (zone.zoneId != zoneId)
         return;

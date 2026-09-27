@@ -239,10 +239,17 @@ int main(int argc, char* argv[])
     LoginDatabase.CommitTransaction();
 
     uint32 networkThreadCount = sConfig.GetIntDefault("ListenerThreads", 1);
+    int32 listenBacklog = sConfig.GetIntDefault("ListenBacklog", 1024);
+    if (listenBacklog <= 0)
+        listenBacklog = 1024;
     MaNGOS::AsyncListener<AuthSocket> listener(context,
             sConfig.GetStringDefault("BindIP", "0.0.0.0"),
-            sConfig.GetIntDefault("RealmServerPort", DEFAULT_REALMSERVER_PORT)
+            sConfig.GetIntDefault("RealmServerPort", DEFAULT_REALMSERVER_PORT),
+            listenBacklog
     );
+
+    sLog.outString("Network backend: %s; workers: %u; listen backlog: %d",
+        MaNGOS::GetAsyncIoBackendName(), networkThreadCount, listenBacklog);
 
     std::vector<std::thread> threads;
     for (uint32 i = 0; i < networkThreadCount; ++i)

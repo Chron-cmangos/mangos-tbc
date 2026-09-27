@@ -655,7 +655,8 @@ bool ChatHandler::HandleGoCreatureCommand(char* args)
         return false;
     }
 
-    if (Map* map = sMapMgr.FindMap(data->mapid))
+    uint32 const instanceId = sMapMgr.GetContinentInstanceId(data->mapid, data->posX, data->posY);
+    if (Map* map = sMapMgr.FindMap(data->mapid, instanceId))
     {
         if (map->IsContinent())
         {
@@ -4402,7 +4403,7 @@ bool ChatHandler::HandlePoolListCommand(char* /*args*/)
     // spawn pools for expected map or for not initialized shared pools state for non-instanceable maps
     for (uint16 pool_id = 0; pool_id < sPoolMgr.GetMaxPoolId(); ++pool_id)
     {
-        if (sPoolMgr.GetPoolTemplate(pool_id).CanBeSpawnedAtMap(mapState->GetMapEntry()))
+        if (sPoolMgr.GetPoolTemplate(pool_id).CanBeSpawnedAtMap(mapState->GetMapEntry(), mapState->GetInstanceId()))
         {
             ShowPoolListHelper(pool_id);
             ++counter;
