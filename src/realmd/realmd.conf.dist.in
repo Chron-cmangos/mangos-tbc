@@ -48,6 +48,10 @@ ConfVersion=2021031501
 #        Number of listener threads realmd should use.
 #        Default: 1
 #
+#    ListenBacklog
+#        Maximum number of pending TCP connections waiting to be accepted.
+#        Default: 1024
+#
 #    PidFile
 #        Realmd daemon PID file
 #        Default: ""             - do not create PID file
@@ -132,6 +136,7 @@ MaxPingTime = 30
 RealmServerPort = 3724
 BindIP = "0.0.0.0"
 ListenerThreads = 1
+ListenBacklog = 1024
 PidFile = ""
 LogLevel = 0
 LogTime = 0

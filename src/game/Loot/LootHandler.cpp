@@ -275,6 +275,18 @@ void WorldSession::HandleLootMethodOpcode(WorldPacket& recv_data)
         return;
     /********************/
 
+    if (lootMethod > MASTER_LOOT)
+        return;
+
+    if (lootMethod == MASTER_LOOT)
+    {
+        // A client must not be able to nominate someone outside the group.
+        if (!group->IsMember(lootMaster))
+            return;
+    }
+    else
+        lootMaster.Clear();
+
     // everything is fine, do it
     group->SetLootMethod((LootMethod)lootMethod);
     group->SetMasterLooterGuid(lootMaster);

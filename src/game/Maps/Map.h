@@ -44,6 +44,7 @@
 #include <bitset>
 #include <functional>
 #include <list>
+#include <mutex>
 
 struct CreatureInfo;
 class Creature;
@@ -176,6 +177,7 @@ class Map : public GridRefManager<NGridType>
         void ExecuteMapWorkerArea(uint32 areaId, std::function<void(Player*)> const& worker);
 
         float GetVisibilityDistance() const { return m_VisibleDistance; }
+        void SetVisibilityDistanceScale(float scale);
         // function for setting up visibility distance for maps on per-type/per-Id basis
         virtual void InitVisibilityDistance();
         void VisiblityDistanceChanged(WorldObject* obj, float oldVisibility, VisibilityDistanceType newVisiblity);
@@ -333,14 +335,14 @@ class Map : public GridRefManager<NGridType>
         std::map<uint32, uint32>& GetTempPets() { return m_tempPets; }
         
         // schedule for update object create change
-        void AddUpdateCreateObject(Object* obj) { m_objectsToClientCreateUpdate.insert({ obj, obj->GetObjectGuid() }); }
-        void RemoveUpdateCreateObject(Object* obj) { m_objectsToClientCreateUpdate.erase({ obj, obj->GetObjectGuid() }); }
+        void AddUpdateCreateObject(Object* obj) { std::lock_guard<std::mutex> guard(m_updateObjectLock); m_objectsToClientCreateUpdate.insert({ obj, obj->GetObjectGuid() }); }
+        void RemoveUpdateCreateObject(Object* obj) { std::lock_guard<std::mutex> guard(m_updateObjectLock); m_objectsToClientCreateUpdate.erase({ obj, obj->GetObjectGuid() }); }
         // schedule for update object values change
-        void AddUpdateObject(Object* obj) { m_objectsToClientUpdate.insert(obj); }
-        void RemoveUpdateObject(Object* obj) { m_objectsToClientUpdate.erase(obj); }
+        void AddUpdateObject(Object* obj) { std::lock_guard<std::mutex> guard(m_updateObjectLock); m_objectsToClientUpdate.insert(obj); }
+        void RemoveUpdateObject(Object* obj) { std::lock_guard<std::mutex> guard(m_updateObjectLock); m_objectsToClientUpdate.erase(obj); }
         // schedule for update object visibility change
-        void AddUpdateMovementObject(Object* obj) { m_objectsToClientMovementUpdate.insert(obj); }
-        void RemoveUpdateMovementObject(Object* obj) { m_objectsToClientMovementUpdate.erase(obj); }
+        void AddUpdateMovementObject(Object* obj) { std::lock_guard<std::mutex> guard(m_updateObjectLock); m_objectsToClientMovementUpdate.insert(obj); }
+        void RemoveUpdateMovementObject(Object* obj) { std::lock_guard<std::mutex> guard(m_updateObjectLock); m_objectsToClientMovementUpdate.erase(obj); }
         // schedule update object destruction of object
         void AddUpdateRemoveObject(GuidSet& visible, ObjectGuid guid);
         void AddUpdateRemoveObject(GuidSet&& visible, ObjectGuid guid);
@@ -495,6 +497,7 @@ class Map : public GridRefManager<NGridType>
         std::set<Object*> m_objectsToClientMovementUpdate;
         std::vector<std::pair<GuidSet, ObjectGuid>> m_objectsToClientRemove;
         std::unordered_map<Object*, PlayerSet> m_visibilityAdded;
+        std::mutex m_updateObjectLock;
 
         std::set<WorldObject*> m_largeObjects;
         std::set<WorldObject*> m_infiniteObjects;
@@ -510,6 +513,7 @@ class Map : public GridRefManager<NGridType>
         uint32 m_clientUpdateTimer;
         uint32 m_clientUpdateTick;
         float m_VisibleDistance;
+        float m_BaseVisibleDistance;
         MapPersistentState* m_persistentState;
 
         MapRefManager m_mapRefManager;
@@ -543,6 +547,7 @@ class Map : public GridRefManager<NGridType>
         std::bitset<TOTAL_NUMBER_OF_CELLS_PER_MAP* TOTAL_NUMBER_OF_CELLS_PER_MAP> marked_cells;
 
         WorldObjectSet i_objectsToRemove;
+        std::recursive_mutex m_removeListLock;
 
         typedef std::multimap<TimePoint, ScriptAction> ScriptScheduleMap;
         ScriptScheduleMap m_scriptSchedule;

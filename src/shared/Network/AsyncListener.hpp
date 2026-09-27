@@ -29,13 +29,32 @@ using namespace boost::placeholders;
 
 namespace MaNGOS
 {
+    inline char const* GetAsyncIoBackendName()
+    {
+#if defined(BOOST_ASIO_HAS_IOCP)
+        return "Windows IOCP";
+#elif defined(BOOST_ASIO_HAS_EPOLL)
+        return "Linux epoll";
+#elif defined(BOOST_ASIO_HAS_KQUEUE)
+        return "BSD/macOS kqueue";
+#else
+        return "portable reactor";
+#endif
+    }
+
     template <typename SocketType>
     class AsyncListener
     {
         public:
             // constructor for accepting connection from client
-            AsyncListener(boost::asio::io_context& io_context, std::string const& bindIp, unsigned short port) : m_context(io_context), m_acceptor(io_context, boost::asio::ip::tcp::endpoint(boost::asio::ip::make_address(bindIp), port))
+            AsyncListener(boost::asio::io_context& io_context, std::string const& bindIp, unsigned short port,
+                int backlog = boost::asio::socket_base::max_listen_connections) : m_context(io_context), m_acceptor(io_context)
             {
+                boost::asio::ip::tcp::endpoint endpoint(boost::asio::ip::make_address(bindIp), port);
+                m_acceptor.open(endpoint.protocol());
+                m_acceptor.set_option(boost::asio::socket_base::reuse_address(true));
+                m_acceptor.bind(endpoint);
+                m_acceptor.listen(backlog);
                 startAccept();
             }
             void HandleAccept(std::shared_ptr<SocketType> connection, const boost::system::error_code& err)
@@ -50,6 +69,9 @@ namespace MaNGOS
             boost::asio::ip::tcp::acceptor m_acceptor;
             void startAccept()
             {
+                if (!m_acceptor.is_open())
+                    return;
+                
                 // socket
                 std::shared_ptr<SocketType> connection = std::make_shared<SocketType>(m_context);
 

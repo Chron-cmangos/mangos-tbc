@@ -9806,12 +9806,18 @@ void ObjectMgr::LoadVendors()
  */
 void ObjectMgr::LoadActiveEntities(Map* _map)
 {
+    auto belongsToMapPartition = [_map](float x, float y)
+    {
+        return !sWorld.getConfig(CONFIG_BOOL_CONTINENTS_INSTANCIATE) || !_map->IsContinent() ||
+            sMapMgr.GetContinentInstanceId(_map->GetId(), x, y) == _map->GetInstanceId();
+    };
+
     // Load active objects for _map
     if (sWorld.isForceLoadMap(_map->GetId()))
     {
         for (CreatureDataMap::const_iterator itr = mCreatureDataMap.begin(); itr != mCreatureDataMap.end(); ++itr)
         {
-            if (itr->second.mapid == _map->GetId())
+            if (itr->second.mapid == _map->GetId() && belongsToMapPartition(itr->second.posX, itr->second.posY))
                 _map->ForceLoadGrid(itr->second.posX, itr->second.posY);
         }
     }
@@ -9821,14 +9827,16 @@ void ObjectMgr::LoadActiveEntities(Map* _map)
         for (auto itr = bounds.first; itr != bounds.second; ++itr)
         {
             CreatureData const& data = mCreatureDataMap[itr->second];
-            _map->ForceLoadGrid(data.posX, data.posY);
+            if (belongsToMapPartition(data.posX, data.posY))
+                _map->ForceLoadGrid(data.posX, data.posY);
         }
 
         bounds = m_activeGameObjects.equal_range(_map->GetId());
         for (auto itr = bounds.first; itr != bounds.second; ++itr)
         {
             GameObjectData const& data = mGameObjectDataMap[itr->second];
-            _map->ForceLoadGrid(data.posX, data.posY);
+            if (belongsToMapPartition(data.posX, data.posY))
+                _map->ForceLoadGrid(data.posX, data.posY);
         }
     }
 
@@ -9840,18 +9848,26 @@ void ObjectMgr::LoadLargeEntities(Map* _map)
     if (sWorld.isForceLoadMap(_map->GetId())) // handled by active
         return;
 
+    auto belongsToMapPartition = [_map](float x, float y)
+    {
+        return !sWorld.getConfig(CONFIG_BOOL_CONTINENTS_INSTANCIATE) || !_map->IsContinent() ||
+            sMapMgr.GetContinentInstanceId(_map->GetId(), x, y) == _map->GetInstanceId();
+    };
+
     auto bounds = m_largeCreatures.equal_range(_map->GetId());
     for (auto itr = bounds.first; itr != bounds.second; ++itr)
     {
         CreatureData const& data = mCreatureDataMap[itr->second];
-        _map->ForceLoadGrid(data.posX, data.posY);
+        if (belongsToMapPartition(data.posX, data.posY))
+            _map->ForceLoadGrid(data.posX, data.posY);
     }
 
     bounds = m_largeGameObjects.equal_range(_map->GetId());
     for (auto itr = bounds.first; itr != bounds.second; ++itr)
     {
         GameObjectData const& data = mGameObjectDataMap[itr->second];
-        _map->ForceLoadGrid(data.posX, data.posY);
+        if (belongsToMapPartition(data.posX, data.posY))
+            _map->ForceLoadGrid(data.posX, data.posY);
     }
 }
 

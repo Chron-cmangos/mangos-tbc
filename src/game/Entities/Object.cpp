@@ -890,10 +890,27 @@ void Object::_SetCreateBits(UpdateMask& updateMask, Player* target) const
     uint16 const* flags = nullptr;
     uint16 visibleFlag = GetUpdateFieldFlagsForTarget(target, flags);
     MANGOS_ASSERT(flags);
+    bool const* guidFieldStart = UpdateFields::GetGuidFieldStartArray(GetTypeId());
 
     for (uint16 index = 0; index < m_valuesCount; ++index)
-        if (GetUInt32Value(index) != 0 && (flags[index] & visibleFlag))
+    {
+        if (!(flags[index] & visibleFlag))
+            continue;
+
+        // The client ignores a 64-bit update field when only one half is
+        // present in a create block. Send GUID pairs atomically.
+        if (guidFieldStart && guidFieldStart[index])
+        {
+            if (GetUInt32Value(index) != 0 || GetUInt32Value(index + 1) != 0)
+            {
+                updateMask.SetBit(index);
+                updateMask.SetBit(index + 1);
+            }
+            ++index;
+        }
+        else if (GetUInt32Value(index) != 0)
             updateMask.SetBit(index);
+    }
 }
 
 void Object::SetInt32Value(uint16 index, int32 value)

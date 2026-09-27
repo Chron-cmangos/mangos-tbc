@@ -1942,8 +1942,9 @@ void Creature::DeleteFromDB()
 
 void Creature::DeleteFromDB(uint32 lowguid, CreatureData const* data)
 {
+    uint32 instanceId = sMapMgr.GetContinentInstanceId(data->mapid, data->posX, data->posY);
     CreatureRespawnDeleteWorker worker(lowguid);
-    sMapPersistentStateMgr.DoForAllStatesWithMapId(data->mapid, worker);
+    sMapPersistentStateMgr.DoForAllStatesWithMapId(data->mapid, instanceId, worker);
 
     sObjectMgr.DeleteCreatureData(lowguid);
 
@@ -1956,6 +1957,72 @@ void Creature::DeleteFromDB(uint32 lowguid, CreatureData const* data)
     WorldDatabase.PExecuteLog("DELETE FROM creature_battleground WHERE guid=%u", lowguid);
     WorldDatabase.PExecuteLog("DELETE FROM creature_linking WHERE guid=%u OR master_guid=%u", lowguid, lowguid);
     WorldDatabase.CommitTransaction();
+}
+
+class DynamicRespawnRatesChecker
+{
+    public:
+        explicit DynamicRespawnRatesChecker(Creature const* creature) : m_count(0), m_level(creature->GetLevel()),
+            m_maxLevelDiff(sWorld.getConfig(CONFIG_UINT32_DYN_RESPAWN_PLAYERS_LEVELDIFF)) {}
+
+        void operator()(Player* player)
+        {
+            if (uint32(std::abs(int32(player->GetLevel()) - int32(m_level))) <= m_maxLevelDiff)
+                ++m_count;
+        }
+
+        uint32 GetCount() const { return m_count; }
+
+    private:
+        uint32 m_count;
+        uint32 m_level;
+        uint32 m_maxLevelDiff;
+};
+
+void Creature::ApplyDynamicRespawnDelay(uint32& delay)
+{
+    if (!IsInWorld() || GetMapId() > 1 || GetSubtype() != CREATURE_SUBTYPE_GENERIC)
+        return;
+
+    float const checkRange = sWorld.getConfig(CONFIG_FLOAT_DYN_RESPAWN_CHECK_RANGE);
+    if (checkRange <= 0.0f || GetLevel() > sWorld.getConfig(CONFIG_UINT32_DYN_RESPAWN_AFFECT_LEVEL_BELOW) ||
+        delay > sWorld.getConfig(CONFIG_UINT32_DYN_RESPAWN_AFFECT_RESPAWN_TIME_BELOW) ||
+        delay < sWorld.getConfig(CONFIG_UINT32_DYN_RESPAWN_MIN_RESPAWN_TIME))
+        return;
+
+    // Keep scripted, grouped, pooled/event, and elite encounters on their
+    // authored timers. Dynamic scaling is intended for ordinary open-world
+    // population only.
+    CreatureData const* data = sObjectMgr.GetCreatureData(GetDbGuid());
+    if ((IsElite() && !sWorld.getConfig(CONFIG_BOOL_DYN_RESPAWN_ALLOW_ELITES)) || GetScriptId() ||
+        GetCreatureGroup() || !data || !data->IsNotPartOfPoolOrEvent())
+        return;
+
+    DynamicRespawnRatesChecker check(this);
+    MaNGOS::PlayerWorker<DynamicRespawnRatesChecker> searcher(check);
+    Cell::VisitWorldObjects(this, searcher, checkRange);
+
+    int32 playerCount = int32(check.GetCount()) - int32(sWorld.getConfig(CONFIG_UINT32_DYN_RESPAWN_PLAYERS_THRESHOLD));
+    if (playerCount <= 0)
+        return;
+
+    uint32 const originalDelay = delay;
+    float reductionRate = float(playerCount) * sWorld.getConfig(CONFIG_FLOAT_DYN_RESPAWN_PERCENT_PER_PLAYER) / 100.0f;
+    reductionRate = std::min(reductionRate, sWorld.getConfig(CONFIG_FLOAT_DYN_RESPAWN_MAX_REDUCTION_RATE));
+    if (reductionRate < 0.0f)
+        return;
+
+    uint32 const reduction = uint32(reductionRate * float(originalDelay));
+    delay = reduction >= delay ? 0 : delay - reduction;
+
+    uint32 minimum = sWorld.getConfig(CONFIG_UINT32_DYN_RESPAWN_MIN_RESPAWN_TIME);
+    uint32 const indoorMinimum = sWorld.getConfig(CONFIG_UINT32_DYN_RESPAWN_MIN_RESPAWN_TIME_INDOORS);
+    if (IsElite())
+        minimum = std::max(minimum, sWorld.getConfig(CONFIG_UINT32_DYN_RESPAWN_MIN_RESPAWN_TIME_ELITE));
+    else if (indoorMinimum && !GetTerrain()->IsOutdoors(GetPositionX(), GetPositionY(), GetPositionZ()))
+        minimum = std::max(minimum, indoorMinimum);
+
+    delay = std::min(originalDelay, std::max(delay, minimum));
 }
 
 void Creature::SetDeathState(DeathState s)
@@ -1972,11 +2039,14 @@ void Creature::SetDeathState(DeathState s)
         else if (m_respawnOverrideOnce)
             m_respawnOverriden = false;
 
+        uint32 respawnDelay = m_respawnDelay;
+        ApplyDynamicRespawnDelay(respawnDelay);
+
         if (m_settings.HasFlag(CreatureStaticFlags3::FOREVER_CORPSE_DURATION))
             m_corpseExpirationTime = GetMap()->GetCurrentClockTime() + std::chrono::hours(24*7);
         else
             m_corpseExpirationTime = GetMap()->GetCurrentClockTime() + std::chrono::seconds(m_corpseDelay); // the max/default time for corpse decay (before creature is looted/AllLootRemovedFromCorpse() is called)
-        m_respawnTime = time(nullptr) + m_respawnDelay; // respawn delay (spawntimesecs)
+        m_respawnTime = time(nullptr) + respawnDelay; // respawn delay (spawntimesecs)
 
         // always save boss respawn time at death to prevent crash cheating
         if (sWorld.getConfig(CONFIG_BOOL_SAVE_RESPAWN_TIME_IMMEDIATELY) || IsWorldBoss())

@@ -214,7 +214,7 @@ ObjectAccessor::AddCorpsesToGrid(GridPair const& gridpair, GridType& grid, Map* 
         if (iter.second->GetGrid() == gridpair)
         {
             // verify, if the corpse in our instance (add only corpses which are)
-            if (map->Instanceable())
+            if (map->Instanceable() || map->GetInstanceId() != 0)
             {
                 if (iter.second->GetInstanceId() == map->GetInstanceId())
                 {

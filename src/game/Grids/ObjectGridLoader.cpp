@@ -26,6 +26,7 @@
 #include "World/World.h"
 #include "Grids/CellImpl.h"
 #include "Maps/GridDefines.h"
+#include "Maps/MapManager.h"
 
 class ObjectGridRespawnMover
 {
@@ -118,6 +119,31 @@ void LoadHelper(CellGuidSet const& guid_set, CellPair& cell, GridRefManager<T>& 
 
     for (uint32 guid : guid_set)
     {
+        if (sWorld.getConfig(CONFIG_BOOL_CONTINENTS_INSTANCIATE) && map->IsContinent())
+        {
+            float spawnX = 0.0f;
+            float spawnY = 0.0f;
+            if constexpr (std::is_same_v<T, GameObject>)
+            {
+                GameObjectData const* data = sObjectMgr.GetGOData(guid);
+                if (!data)
+                    continue;
+                spawnX = data->posX;
+                spawnY = data->posY;
+            }
+            else
+            {
+                CreatureData const* data = sObjectMgr.GetCreatureData(guid);
+                if (!data)
+                    continue;
+                spawnX = data->posX;
+                spawnY = data->posY;
+            }
+
+            if (sMapMgr.GetContinentInstanceId(map->GetId(), spawnX, spawnY) != map->GetInstanceId())
+                continue;
+        }
+        
         T* obj;
         uint32 newGuid = guid;
         if constexpr (std::is_same_v<T, GameObject>)

@@ -18,6 +18,7 @@
 
 #include "Maps/Map.h"
 #include "Maps/MapManager.h"
+#include "Maps/MapWorkers.h"
 #include "Entities/Player.h"
 #include "Grids/GridNotifiers.h"
 #include "Log/Log.h"
@@ -40,10 +41,14 @@
 #include "Weather/Weather.h"
 #include "AI/ScriptDevAI/ScriptDevAIMgr.h"
 #include "BattleGround/BattleGroundMgr.h"
+#include "Util/Timer.h"
 
 #ifdef BUILD_METRICS
  #include "Metric/Metric.h"
 #endif
+
+#include <time.h>
+#include <cmath>
 
 #ifdef ENABLE_PLAYERBOTS
 #include "playerbot/playerbot.h"
@@ -188,7 +193,7 @@ void Map::LoadMapAndVMap(int gx, int gy)
 Map::Map(uint32 id, time_t expiry, uint32 InstanceId, uint8 SpawnMode)
     : i_mapEntry(sMapStore.LookupEntry(id)), i_spawnMode(SpawnMode),
       i_id(id), i_InstanceId(InstanceId), m_unloadTimer(0), m_clientUpdateTimer(0), m_clientUpdateTick(0),
-      m_VisibleDistance(DEFAULT_VISIBILITY_DISTANCE), m_persistentState(nullptr),
+      m_VisibleDistance(DEFAULT_VISIBILITY_DISTANCE), m_BaseVisibleDistance(DEFAULT_VISIBILITY_DISTANCE), m_persistentState(nullptr),
       m_activeNonPlayersIter(m_activeNonPlayers.end()), m_onEventNotifiedIter(m_onEventNotifiedObjects.end()),
       i_gridExpiry(expiry), m_TerrainData(sTerrainMgr.LoadTerrain(id)),
       i_data(nullptr), i_script_id(0), m_transportsIterator(m_transports.begin()), m_spawnManager(*this),
@@ -217,6 +222,7 @@ void Map::Initialize(std::mutex* mmapMutex, bool loadInstanceData /*= true*/)
 
     // lets initialize visibility distance for map
     InitVisibilityDistance();
+    m_BaseVisibleDistance = m_VisibleDistance;
 
     // add reference for TerrainData object
     m_TerrainData->AddRef();
@@ -281,6 +287,12 @@ void Map::VisiblityDistanceChanged(WorldObject* obj, float oldVisibility, Visibi
         m_largeObjects.insert(obj);
 
     AddUpdateMovementObject(obj);
+}
+
+void Map::SetVisibilityDistanceScale(float scale)
+{
+    scale = std::max(0.25f, std::min(1.0f, scale));
+    m_VisibleDistance = m_BaseVisibleDistance * scale;
 }
 
 // Template specialization of utility methods
@@ -756,6 +768,17 @@ void Map::Update(const uint32& t_diff)
     m_clientUpdateTimer += t_diff;
     if (IsUpdateObjectTick())
         ++m_clientUpdateTick;
+
+    const bool performanceLogging = sWorld.getConfig(CONFIG_BOOL_PERFORMANCE_LOG_ENABLED);
+    const uint32 performanceMapStart = WorldTimer::getMSTime();
+    uint32 performanceSessionElapsed = 0;
+    uint32 performancePlayerElapsed = 0;
+    uint32 performanceBotElapsed = 0;
+    uint32 performancePlayerCount = 0;
+    uint32 performanceBotCount = 0;
+    uint32 performanceFullBotUpdates = 0;
+    uint32 performanceMinimalBotUpdates = 0;
+
 #ifdef BUILD_METRICS
     metric::duration<std::chrono::milliseconds> meas("map.update", {
         { "map_id", std::to_string(i_id) },
@@ -793,6 +816,7 @@ void Map::Update(const uint32& t_diff)
 
     // the player iterator is stored in the map object
     // to make sure calls to Map::Remove don't invalidate it
+    const uint32 performanceSessionStart = WorldTimer::getMSTime();
     {
 #ifdef BUILD_METRICS
         uint32 updatedSessions = 0;
@@ -819,6 +843,9 @@ void Map::Update(const uint32& t_diff)
         sessions_meas.add_field("count", std::to_string(static_cast<int32>(updatedSessions)));
 #endif
     }
+    performanceSessionElapsed = WorldTimer::getMSTimeDiff(performanceSessionStart, WorldTimer::getMSTime());
+
+    const uint32 performancePlayerStart = WorldTimer::getMSTime();
 
 #ifdef ENABLE_PLAYERBOTS
     // Calculate the active zones every 10 seconds (An active zone is a zone where one or more real players are)
@@ -879,6 +906,7 @@ void Map::Update(const uint32& t_diff)
     }
 
     bool shouldUpdateBots = urand(0, (uint32)(botUpdateChance * 100)) < 100;
+    const uint32 backgroundBotCadence = std::max<uint32>(1, static_cast<uint32>(std::ceil(botUpdateChance)));
 #endif
 
     /// update players at tick
@@ -887,9 +915,19 @@ void Map::Update(const uint32& t_diff)
         Player* plr = m_mapRefIter->getSource();
         if (plr && plr->IsInWorld())
         {
+            ++performancePlayerCount;
 #ifdef ENABLE_PLAYERBOTS
+            const bool isPlayerbot = plr->GetPlayerbotAI() && !plr->GetPlayerbotAI()->IsRealPlayer();
+            if (isPlayerbot)
+                ++performanceBotCount;
+
             // Determine if the individual bot should update
             bool shouldUpdateBot = shouldUpdateBots;
+            if (isPlayerbot && sWorld.getConfig(CONFIG_BOOL_PLAYERBOT_STAGGER_BACKGROUND_UPDATES))
+            {
+                const uint32 loop = World::m_worldLoopCounter.load(std::memory_order_relaxed);
+                shouldUpdateBot = ((loop + plr->GetGUIDLow()) % backgroundBotCadence) == 0;
+            }
 
             // Real players should update always (it will update alt bots)
             if (!plr->GetPlayerbotAI() || plr->GetPlayerbotAI()->IsRealPlayer())
@@ -931,6 +969,8 @@ void Map::Update(const uint32& t_diff)
             plr->Update(t_diff);
 
 #ifdef ENABLE_PLAYERBOTS
+            const bool minimalBotUpdate = !sPlayerbotAIConfig.disableBotOptimizations && !shouldUpdateBot;
+            const uint32 performanceBotStart = performanceLogging && isPlayerbot ? WorldTimer::getMSTime() : 0;
             if (sPlayerbotAIConfig.disableBotOptimizations)
             {
                 plr->UpdateAI(t_diff, false);
@@ -938,6 +978,24 @@ void Map::Update(const uint32& t_diff)
             else
             {
                 plr->UpdateAI(t_diff, !shouldUpdateBot);
+            }
+
+            if (isPlayerbot)
+            {
+                const uint32 botElapsed = performanceLogging ? WorldTimer::getMSTimeDiff(performanceBotStart, WorldTimer::getMSTime()) : 0;
+                performanceBotElapsed += botElapsed;
+                if (minimalBotUpdate)
+                    ++performanceMinimalBotUpdates;
+                else
+                    ++performanceFullBotUpdates;
+
+                if (performanceLogging && botElapsed >= sWorld.getConfig(CONFIG_UINT32_PERFORMANCE_LOG_SLOW_BOT_MS))
+                {
+                    sLog.outPerformance("SLOW_BOT name=%s guid=%u map=%u instance=%u elapsed=%u ms mode=%s combat=%u has_real_master=%u",
+                        plr->GetName(), plr->GetGUIDLow(), GetId(), GetInstanceId(), botElapsed,
+                        minimalBotUpdate ? "minimal" : "full", plr->IsInCombat() ? 1 : 0,
+                        plr->GetPlayerbotAI()->HasRealPlayerMaster() ? 1 : 0);
+                }
             }
 #endif
         }
@@ -951,6 +1009,8 @@ void Map::Update(const uint32& t_diff)
         sLog.outBasic("Map %u: Active Zone Players - %u of %u", GetId(), activePlayers, m_mapRefManager.getSize());
     }
 #endif
+
+    performancePlayerElapsed = WorldTimer::getMSTimeDiff(performancePlayerStart, WorldTimer::getMSTime());
 
     for (m_mapRefIter = m_mapRefManager.begin(); m_mapRefIter != m_mapRefManager.end(); ++m_mapRefIter)
     {
@@ -1131,6 +1191,29 @@ void Map::Update(const uint32& t_diff)
     }
 
     m_weatherSystem->UpdateWeathers(t_diff);
+
+    for (m_mapRefIter = m_mapRefManager.begin(); m_mapRefIter != m_mapRefManager.end(); ++m_mapRefIter)
+    {
+        if (Player* player = m_mapRefIter->getSource())
+        {
+            if (WorldSession* session = player->GetSession())
+                session->FlushMovementPackets();
+        }
+    }
+
+    if (performanceLogging)
+    {
+        const uint32 performanceTotalElapsed = WorldTimer::getMSTimeDiff(performanceMapStart, WorldTimer::getMSTime());
+        const uint32 slowMapThreshold = sWorld.getConfig(CONFIG_UINT32_PERFORMANCE_LOG_SLOW_MAP_MS);
+        const uint32 slowBotThreshold = sWorld.getConfig(CONFIG_UINT32_PERFORMANCE_LOG_SLOW_BOT_MS);
+        if (performanceTotalElapsed >= slowMapThreshold || performanceBotElapsed >= slowBotThreshold)
+        {
+            sLog.outPerformance("SLOW_MAP map=%u instance=%u name=%s total=%u ms sessions=%u ms players_phase=%u ms bot_ai=%u ms players=%u bots=%u bot_full=%u bot_minimal=%u objects=%llu input_diff=%u ms",
+                GetId(), GetInstanceId(), GetMapName(), performanceTotalElapsed, performanceSessionElapsed,
+                performancePlayerElapsed, performanceBotElapsed, performancePlayerCount, performanceBotCount,
+                performanceFullBotUpdates, performanceMinimalBotUpdates, static_cast<unsigned long long>(count), t_diff);
+        }
+    }
 }
 
 uint64 Map::PerformObjectUpdate(uint32 t_diff, WorldObjectUnSet& objToUpdate)
@@ -1722,6 +1805,8 @@ void Map::AddObjectToRemoveList(WorldObject* obj)
 {
     MANGOS_ASSERT(obj->GetMapId() == GetId() && obj->GetInstanceId() == GetInstanceId());
 
+    std::lock_guard<std::recursive_mutex> guard(m_removeListLock);
+
     obj->CleanupsBeforeDelete();                            // remove or simplify at least cross referenced links
 
     i_objectsToRemove.insert(obj);
@@ -1742,14 +1827,20 @@ bool Map::IsInRemoveList(WorldObject* obj) const
 
 void Map::RemoveAllObjectsInRemoveList()
 {
-    if (i_objectsToRemove.empty())
+    WorldObjectSet objectsToRemove;
+    {
+        std::lock_guard<std::recursive_mutex> guard(m_removeListLock);
+        objectsToRemove.swap(i_objectsToRemove);
+    }
+
+    if (objectsToRemove.empty())
         return;
 
     // DEBUG_LOG("Object remover 1 check.");
-    while (!i_objectsToRemove.empty())
+    while (!objectsToRemove.empty())
     {
-        WorldObject* obj = *i_objectsToRemove.begin();
-        i_objectsToRemove.erase(i_objectsToRemove.begin());
+        WorldObject* obj = *objectsToRemove.begin();
+        objectsToRemove.erase(objectsToRemove.begin());
         obj->m_inRemoveList = false;
 
         switch (obj->GetTypeId())
@@ -2675,7 +2766,10 @@ void Map::UpdateVisibility(UpdateDataMapType& update_players)
     std::unordered_set<Object*> visited;
     {
         std::set<std::pair<Object*, ObjectGuid>> createObjects;
-        std::swap(createObjects, m_objectsToClientCreateUpdate);
+        {
+            std::lock_guard<std::mutex> guard(m_updateObjectLock);
+            createObjects.swap(m_objectsToClientCreateUpdate);
+        }
         for (auto& createObj : createObjects)
         {
             createObj.first->UpdateVisibility(update_players);
@@ -2686,7 +2780,10 @@ void Map::UpdateVisibility(UpdateDataMapType& update_players)
     if (m_clientUpdateTick % 3 == 0) // every 1200ms update vis on moved objects
     {
         std::set<Object*> movementObjects;
-        std::swap(movementObjects, m_objectsToClientMovementUpdate);
+        {
+            std::lock_guard<std::mutex> guard(m_updateObjectLock);
+            movementObjects.swap(m_objectsToClientMovementUpdate);
+        }
         for (auto& movObj : movementObjects)
         {
             if (visited.find(movObj) == visited.end())
@@ -2726,35 +2823,84 @@ void Map::UpdateVisibility(UpdateDataMapType& update_players)
 
 void Map::SendObjectUpdates()
 {
-    UpdateDataMapType update_players;
-
-    while (!m_objectsToClientUpdate.empty()) // do it first to avoid sending update and create to same obj
+    std::set<Object*> objectsToUpdate;
     {
-        Object* obj = *m_objectsToClientUpdate.begin();
-        m_objectsToClientUpdate.erase(m_objectsToClientUpdate.begin());
-        obj->BuildUpdateData(update_players);
+        std::lock_guard<std::mutex> guard(m_updateObjectLock);
+        objectsToUpdate.swap(m_objectsToClientUpdate);
     }
 
-    UpdateVisibility(update_players);
+    std::vector<std::unique_ptr<UpdateDataMapType>> parallelUpdates;
+    UpdateDataMapType sequentialUpdates;
+    uint32 const chunkSize = sWorld.getConfig(CONFIG_UINT32_MAP_VISIBILITY_CHUNK_SIZE);
+    MapUpdater& updater = sMapMgr.GetObjectUpdater();
+
+    if (IsContinent() && updater.activated() && objectsToUpdate.size() >= chunkSize)
+    {
+        size_t const chunkCount = (objectsToUpdate.size() + chunkSize - 1) / chunkSize;
+        parallelUpdates.reserve(chunkCount);
+
+        std::vector<Object*> chunk;
+        chunk.reserve(chunkSize);
+        for (Object* object : objectsToUpdate)
+        {
+            chunk.push_back(object);
+            if (chunk.size() == chunkSize)
+            {
+                parallelUpdates.emplace_back(std::make_unique<UpdateDataMapType>());
+                updater.schedule_update(new ObjectUpdateBuildWorker(std::move(chunk), *parallelUpdates.back(), updater));
+                chunk.clear();
+                chunk.reserve(chunkSize);
+            }
+        }
+
+        if (!chunk.empty())
+        {
+            parallelUpdates.emplace_back(std::make_unique<UpdateDataMapType>());
+            updater.schedule_update(new ObjectUpdateBuildWorker(std::move(chunk), *parallelUpdates.back(), updater));
+        }
+
+        updater.wait();
+    }
+    else
+        for (Object* object : objectsToUpdate)
+            object->BuildUpdateData(sequentialUpdates);
+
+    auto sendUpdates = [](UpdateDataMapType& updates)
+    {
+        for (auto& updatePlayer : updates)
+            updatePlayer.second.SendData(*updatePlayer.first->GetSession());
+    };
+
+    sendUpdates(sequentialUpdates);
+    for (auto& updates : parallelUpdates)
+        sendUpdates(*updates);
+
+    UpdateDataMapType visibilityUpdates;
+    UpdateVisibility(visibilityUpdates);
 
     {
         std::unordered_map<Object*, PlayerSet> visibilityAdded;
-        std::swap(visibilityAdded, m_visibilityAdded);
+        {
+            std::lock_guard<std::mutex> guard(m_updateObjectLock);
+            visibilityAdded.swap(m_visibilityAdded);
+        }
+
         for (auto& visData : visibilityAdded)
-        {               
+        {  
             for (Player* player : visData.second)
-                visData.first->BuildCreateDataForPlayer(player, update_players, false);
+                visData.first->BuildCreateDataForPlayer(player, visibilityUpdates, false);
 
             if (!visData.second.empty() && visData.first->IsUnit())
             {
                 for (Player* player : visData.second)
                 {
-                    std::vector<WorldPacket> auraPackets = Player::BuildAurasForTarget(*player, static_cast<Unit const&>(*(visData.first)));
-                    const auto& updateDataData = update_players.find(player); // always exist after previous loop
+                    std::vector<WorldPacket> auraPackets = Player::BuildAurasForTarget(*player, static_cast<Unit const&>(*visData.first));
+                    auto updateData = visibilityUpdates.find(player);
+                    if (updateData == visibilityUpdates.end())
+                        continue;
+
                     for (auto& auraPacket : auraPackets)
-                    {
-                        updateDataData->second.AddAfterCreatePacket(auraPacket);
-                    }
+                        updateData->second.AddAfterCreatePacket(auraPacket);
                 }
             }
 
@@ -2764,21 +2910,22 @@ void Map::SendObjectUpdates()
 
     {
         std::vector<std::pair<GuidSet, ObjectGuid>> removeObjects;
-        std::swap(removeObjects, m_objectsToClientRemove);
+        {
+            std::lock_guard<std::mutex> guard(m_updateObjectLock);
+            removeObjects.swap(m_objectsToClientRemove);
+        }
+
         for (auto& removeObj : removeObjects)
         {
             for (ObjectGuid clientImAt : removeObj.first)
             {
                 if (Player* player = GetPlayer(clientImAt))
-                    Object::BuildOutOfRangeDataForPlayer(player, update_players, removeObj.second);
+                    Object::BuildOutOfRangeDataForPlayer(player, visibilityUpdates, removeObj.second);
             }
         }
     }
 
-    for (auto& update_player : update_players)
-    {
-        update_player.second.SendData(*update_player.first->GetSession());
-    }
+    sendUpdates(visibilityUpdates);
 }
 
 Creature* Map::GetCreature(uint32 dbguid) const
@@ -2903,21 +3050,25 @@ void Map::RemoveStringIdObject(uint32 stringId, WorldObject* obj)
 
 void Map::AddUpdateRemoveObject(GuidSet& visible, ObjectGuid guid)
 {
+    std::lock_guard<std::mutex> guard(m_updateObjectLock);
     m_objectsToClientRemove.emplace_back(visible, guid);
 }
 
 void Map::AddUpdateRemoveObject(GuidSet&& visible, ObjectGuid guid)
 {
-    m_objectsToClientRemove.emplace_back(visible, guid);
+    std::lock_guard<std::mutex> guard(m_updateObjectLock);
+    m_objectsToClientRemove.emplace_back(std::move(visible), guid);
 }
 
 void Map::AddCreateAtClientObject(Player* player, Object* obj)
 {
+    std::lock_guard<std::mutex> guard(m_updateObjectLock);
     m_visibilityAdded[obj].insert(player);
 }
 
 void Map::AddCreateAtClientObjects(PlayerSet const& players, Object* obj)
 {
+    std::lock_guard<std::mutex> guard(m_updateObjectLock);
     m_visibilityAdded[obj].insert(players.begin(), players.end());
 }
 

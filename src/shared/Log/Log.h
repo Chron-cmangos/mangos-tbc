@@ -135,6 +135,10 @@ class Log : public MaNGOS::Singleton<Log, MaNGOS::ClassLevelLockable<Log, std::m
             if (customLogFile != nullptr)
                 fclose(customLogFile);
             customLogFile = nullptr;
+
+            if (performanceLogFile != nullptr)
+                fclose(performanceLogFile);
+            performanceLogFile = nullptr;
         }
     public:
         void Initialize();

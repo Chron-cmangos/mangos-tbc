@@ -244,7 +244,8 @@ if(POLICY CMP0167)
 endif()
 
 # Find needed packages and if necessery abort if something important is missing
-find_package(Boost 1.70.0 REQUIRED COMPONENTS program_options thread regex serialization filesystem)
+find_package(Boost 1.70.0 REQUIRED COMPONENTS program_options thread regex serialization filesystem exception)
+
 if (UNIX OR APPLE)
     find_package(ICU COMPONENTS uc i18n data REQUIRED)
     add_library(icuuc ALIAS ICU::uc)
@@ -319,7 +320,7 @@ endif()
 # Find core revision
 if(GIT_EXECUTABLE)
   execute_process(
-    COMMAND ${GIT_EXECUTABLE} rev-parse HEAD
+    COMMAND ${GIT_EXECUTABLE} -c safe.directory=${CMAKE_SOURCE_DIR} rev-parse HEAD
     WORKING_DIRECTORY "${CMAKE_SOURCE_DIR}"
     OUTPUT_VARIABLE REVISION_ID
     RESULT_VARIABLE GIT_RESULT
@@ -331,7 +332,7 @@ if(GIT_EXECUTABLE)
     set(REVISION_DATE "\"0000-00-00T00:00:00+00:00\"")
   else()
     execute_process(
-      COMMAND ${GIT_EXECUTABLE} show --quiet --date=iso-strict --format="%ad" ${REVISION_ID}
+      COMMAND ${GIT_EXECUTABLE} -c safe.directory=${CMAKE_SOURCE_DIR} show --quiet --date=iso-strict --format="%ad" ${REVISION_ID}
       WORKING_DIRECTORY "${CMAKE_SOURCE_DIR}"
       OUTPUT_VARIABLE REVISION_DATE
       RESULT_VARIABLE GIT_RESULT

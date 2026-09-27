@@ -4100,7 +4100,7 @@ void PlayerbotAI::AcceptQuest(Quest const* qInfo, Player* pGiver)
         return;
     }
 
-    if (m_bot->GetDividerGuid())
+    if (m_bot->GetDividerGuid() && (!m_bot->GetDividerQuestId() || m_bot->GetDividerQuestId() == quest))
     {
         // send msg to quest giving player
         pGiver->SendPushToPartyResponse(m_bot, QUEST_PARTY_MSG_ACCEPT_QUEST);

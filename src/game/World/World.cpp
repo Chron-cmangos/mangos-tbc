@@ -631,6 +631,40 @@ void World::LoadConfigSettings(bool reload)
     }
 
     setConfig(CONFIG_UINT32_NUM_MAP_THREADS, "MapUpdate.Threads", 3);
+    setConfigMin(CONFIG_UINT32_MAP_OBJECT_THREADS, "MapUpdate.ObjectThreads", 1, 1);
+    setConfigMin(CONFIG_UINT32_MAP_VISIBILITY_CHUNK_SIZE, "MapUpdate.VisibilityChunkSize", 64, 8);
+    setConfig(CONFIG_BOOL_PERFORMANCE_LOG_ENABLED, "PerformanceLog.Enabled", true);
+    setConfigMin(CONFIG_UINT32_PERFORMANCE_LOG_SLOW_WORLD_MS, "PerformanceLog.SlowWorldUpdateMs", 200, 1);
+    setConfigMin(CONFIG_UINT32_PERFORMANCE_LOG_SLOW_MAP_MS, "PerformanceLog.SlowMapUpdateMs", 100, 1);
+    setConfigMin(CONFIG_UINT32_PERFORMANCE_LOG_SLOW_BOT_MS, "PerformanceLog.SlowBotUpdateMs", 50, 1);
+    setConfigMin(CONFIG_UINT32_PERFORMANCE_LOG_SLOW_SESSION_MS, "PerformanceLog.SlowSessionUpdateMs", 50, 1);
+    setConfigMin(CONFIG_UINT32_PERFORMANCE_LOG_SLOW_PACKET_MS, "PerformanceLog.SlowPacketMs", 25, 1);
+    setConfigMin(CONFIG_UINT32_PERFORMANCE_LOG_SLOW_ASYNC_DB_MS, "PerformanceLog.SlowAsyncDbMs", 100, 1);
+    setConfigMin(CONFIG_UINT32_PERFORMANCE_LOG_SLOW_DB_CALLBACK_MS, "PerformanceLog.SlowDbCallbackMs", 50, 1);
+    setConfigMin(CONFIG_UINT32_PERFORMANCE_LOG_SUMMARY_INTERVAL_MS, "PerformanceLog.SummaryIntervalMs", 60000, 1000);
+    setConfig(CONFIG_BOOL_PLAYERBOT_STAGGER_BACKGROUND_UPDATES, "Playerbot.StaggerBackgroundUpdates", true);
+    setConfig(CONFIG_BOOL_ADAPTIVE_LOAD_ENABLED, "AdaptiveLoad.Enabled", true);
+    setConfigMin(CONFIG_UINT32_ADAPTIVE_LOAD_EMPTY_MAP_UPDATE_MS, "AdaptiveLoad.EmptyMapUpdateMs", 500, getConfig(CONFIG_UINT32_INTERVAL_MAPUPDATE));
+    setConfigMin(CONFIG_UINT32_ADAPTIVE_LOAD_SLOW_WORLD_MS, "AdaptiveLoad.SlowWorldMs", 250, 1);
+    setConfigMin(CONFIG_UINT32_ADAPTIVE_LOAD_RECOVER_WORLD_MS, "AdaptiveLoad.RecoverWorldMs", 120, 1);
+    setConfigMinMax(CONFIG_UINT32_ADAPTIVE_LOAD_MIN_VISIBILITY_PERCENT, "AdaptiveLoad.MinVisibilityPercent", 70, 25, 100);
+    setConfigMinMax(CONFIG_UINT32_ADAPTIVE_LOAD_VISIBILITY_STEP_PERCENT, "AdaptiveLoad.VisibilityStepPercent", 5, 1, 25);
+    setConfig(CONFIG_BOOL_MOVEMENT_COMPRESSION_ENABLED, "MovementCompression.Enabled", true);
+    setConfigMin(CONFIG_UINT32_MOVEMENT_COMPRESSION_MIN_PACKETS, "MovementCompression.MinPackets", 3, 2);
+    setConfigMin(CONFIG_UINT32_MOVEMENT_BROADCAST_THREADS, "MovementBroadcast.Threads", 1, 1);
+    setConfigMin(CONFIG_UINT32_MOVEMENT_BROADCAST_MAX_QUEUED_BATCHES, "MovementBroadcast.MaxQueuedBatches", 32768, 128);
+    setConfig(CONFIG_FLOAT_DYN_RESPAWN_CHECK_RANGE, "DynamicRespawn.Range", -1.0f);
+    setConfig(CONFIG_FLOAT_DYN_RESPAWN_MAX_REDUCTION_RATE, "DynamicRespawn.MaxReductionRate", 0.0f);
+    setConfig(CONFIG_FLOAT_DYN_RESPAWN_PERCENT_PER_PLAYER, "DynamicRespawn.PercentPerPlayer", 0.0f);
+    setConfig(CONFIG_UINT32_DYN_RESPAWN_MIN_RESPAWN_TIME, "DynamicRespawn.MinRespawnTime", 0);
+    setConfig(CONFIG_UINT32_DYN_RESPAWN_MIN_RESPAWN_TIME_ELITE, "DynamicRespawn.MinEliteRespawnTime", 0);
+    setConfig(CONFIG_UINT32_DYN_RESPAWN_MIN_RESPAWN_TIME_INDOORS, "DynamicRespawn.MinIndoorRespawnTime", 0);
+    setConfig(CONFIG_UINT32_DYN_RESPAWN_AFFECT_RESPAWN_TIME_BELOW, "DynamicRespawn.AffectRespawnTimeBelow", 0);
+    setConfig(CONFIG_UINT32_DYN_RESPAWN_AFFECT_LEVEL_BELOW, "DynamicRespawn.AffectLevelBelow", 0);
+    setConfig(CONFIG_UINT32_DYN_RESPAWN_PLAYERS_THRESHOLD, "DynamicRespawn.PlayersThreshold", 0);
+    setConfig(CONFIG_UINT32_DYN_RESPAWN_PLAYERS_LEVELDIFF, "DynamicRespawn.PlayersMaxLevelDiff", 0);
+    setConfig(CONFIG_BOOL_DYN_RESPAWN_ALLOW_ELITES, "DynamicRespawn.AllowElites", false);
+    setConfig(CONFIG_BOOL_CONTINENTS_INSTANCIATE, "Continents.Instanciate", false);
     setConfig(CONFIG_UINT32_SKILL_CHANCE_ORANGE, "SkillChance.Orange", 100);
     setConfig(CONFIG_UINT32_SKILL_CHANCE_YELLOW, "SkillChance.Yellow", 75);
     setConfig(CONFIG_UINT32_SKILL_CHANCE_GREEN,  "SkillChance.Green",  25);
@@ -1577,6 +1611,12 @@ void World::Update(uint32 diff)
     m_currentTime = std::chrono::time_point_cast<std::chrono::milliseconds>(Clock::now());
     m_currentDiff = diff;
 
+    const bool performanceLogging = getConfig(CONFIG_BOOL_PERFORMANCE_LOG_ENABLED);
+    const uint32 performanceWorldStart = m_currentMSTime;
+    uint32 performanceBotElapsed = 0;
+    uint32 performanceSessionElapsed = 0;
+    uint32 performanceMapElapsed = 0;
+
 #ifdef ENABLE_PLAYERBOTS
     m_currentDiffSum += diff;
     m_currentDiffSumIndex++;
@@ -1668,15 +1708,19 @@ void World::Update(uint32 diff)
         m_timers[WUPDATE_AHBOT].Reset();
     }
 #endif
+    const uint32 performanceBotStart = WorldTimer::getMSTime();
     sRandomPlayerbotMgr.UpdateAI(diff);
     sRandomPlayerbotMgr.UpdateSessions(diff);
+    performanceBotElapsed = WorldTimer::getMSTimeDiff(performanceBotStart, WorldTimer::getMSTime());
 #endif
 
     /// <li> Handle session updates
 #ifdef BUILD_METRICS
     auto preSessionTime = std::chrono::time_point_cast<std::chrono::milliseconds>(Clock::now());
 #endif
+    const uint32 performanceSessionStart = WorldTimer::getMSTime();
     UpdateSessions(diff);
+    performanceSessionElapsed = WorldTimer::getMSTimeDiff(performanceSessionStart, WorldTimer::getMSTime());
 
     /// <li> Update uptime table
     if (m_timers[WUPDATE_UPTIME].Passed())
@@ -1693,7 +1737,9 @@ void World::Update(uint32 diff)
 #ifdef BUILD_METRICS
     auto preMapTime = std::chrono::time_point_cast<std::chrono::milliseconds>(Clock::now());
 #endif
+    const uint32 performanceMapStart = WorldTimer::getMSTime();
     sMapMgr.Update(diff);
+    performanceMapElapsed = WorldTimer::getMSTimeDiff(performanceMapStart, WorldTimer::getMSTime());
 #ifdef BUILD_METRICS
     auto postMapTime = std::chrono::time_point_cast<std::chrono::milliseconds>(Clock::now());
 #endif
@@ -1761,6 +1807,119 @@ void World::Update(uint32 diff)
 
     // cleanup unused GridMap objects as well as VMaps
     sTerrainMgr.Update(diff);
+
+    const uint32 performanceTotalElapsed = WorldTimer::getMSTimeDiff(performanceWorldStart, WorldTimer::getMSTime());
+
+    if (getConfig(CONFIG_BOOL_ADAPTIVE_LOAD_ENABLED))
+    {
+        static uint32 slowWorldStreak = 0;
+        static uint32 recoveredWorldStreak = 0;
+        static uint32 visibilityPercent = 100;
+
+        const uint32 slowThreshold = getConfig(CONFIG_UINT32_ADAPTIVE_LOAD_SLOW_WORLD_MS);
+        const uint32 recoveryThreshold = getConfig(CONFIG_UINT32_ADAPTIVE_LOAD_RECOVER_WORLD_MS);
+        const uint32 minimumVisibility = getConfig(CONFIG_UINT32_ADAPTIVE_LOAD_MIN_VISIBILITY_PERCENT);
+        const uint32 visibilityStep = getConfig(CONFIG_UINT32_ADAPTIVE_LOAD_VISIBILITY_STEP_PERCENT);
+        bool visibilityChanged = false;
+
+        if (performanceTotalElapsed >= slowThreshold)
+        {
+            ++slowWorldStreak;
+            recoveredWorldStreak = 0;
+            if (slowWorldStreak >= 5 && visibilityPercent > minimumVisibility)
+            {
+                visibilityPercent = std::max(minimumVisibility, visibilityPercent - visibilityStep);
+                slowWorldStreak = 0;
+                visibilityChanged = true;
+            }
+        }
+        else if (performanceTotalElapsed <= recoveryThreshold)
+        {
+            ++recoveredWorldStreak;
+            slowWorldStreak = 0;
+            if (recoveredWorldStreak >= 100 && visibilityPercent < 100)
+            {
+                visibilityPercent = std::min<uint32>(100, visibilityPercent + visibilityStep);
+                recoveredWorldStreak = 0;
+                visibilityChanged = true;
+            }
+        }
+        else
+        {
+            slowWorldStreak = 0;
+            recoveredWorldStreak = 0;
+        }
+
+        if (visibilityChanged)
+        {
+            const float visibilityScale = static_cast<float>(visibilityPercent) / 100.0f;
+            sMapMgr.DoForAllMaps([visibilityScale](Map* map) { map->SetVisibilityDistanceScale(visibilityScale); });
+            sLog.outPerformance("ADAPTIVE_VISIBILITY percent=%u world_update=%u ms sessions_online=%u",
+                visibilityPercent, performanceTotalElapsed, static_cast<uint32>(GetActiveSessionCount()));
+        }
+        else if (visibilityPercent < 100 && (m_worldLoopCounter.load(std::memory_order_relaxed) % 100) == 0)
+        {
+            // Newly created maps should inherit the currently active load-shedding scale.
+            const float visibilityScale = static_cast<float>(visibilityPercent) / 100.0f;
+            sMapMgr.DoForAllMaps([visibilityScale](Map* map) { map->SetVisibilityDistanceScale(visibilityScale); });
+        }
+    }
+
+    if (performanceLogging)
+    {
+        const uint32 measuredElapsed = performanceBotElapsed + performanceSessionElapsed + performanceMapElapsed;
+        const uint32 performanceOtherElapsed = performanceTotalElapsed > measuredElapsed ? performanceTotalElapsed - measuredElapsed : 0;
+        const uint32 slowWorldThreshold = getConfig(CONFIG_UINT32_PERFORMANCE_LOG_SLOW_WORLD_MS);
+
+        static uint32 performanceWindowStart = 0;
+        static uint64 performanceWindowUpdates = 0;
+        static uint64 performanceWindowTotal = 0;
+        static uint64 performanceWindowBots = 0;
+        static uint64 performanceWindowSessions = 0;
+        static uint64 performanceWindowMaps = 0;
+        static uint32 performanceWindowMaximum = 0;
+        static uint32 performanceWindowSlowUpdates = 0;
+
+        if (!performanceWindowStart)
+            performanceWindowStart = performanceWorldStart;
+
+        ++performanceWindowUpdates;
+        performanceWindowTotal += performanceTotalElapsed;
+        performanceWindowBots += performanceBotElapsed;
+        performanceWindowSessions += performanceSessionElapsed;
+        performanceWindowMaps += performanceMapElapsed;
+        performanceWindowMaximum = std::max(performanceWindowMaximum, performanceTotalElapsed);
+
+        if (performanceTotalElapsed >= slowWorldThreshold)
+        {
+            ++performanceWindowSlowUpdates;
+            sLog.outPerformance("SLOW_WORLD loop=%u total=%u ms input_diff=%u ms bots=%u ms sessions=%u ms maps=%u ms other=%u ms sessions_online=%u",
+                m_worldLoopCounter.load(std::memory_order_relaxed), performanceTotalElapsed, diff, performanceBotElapsed,
+                performanceSessionElapsed, performanceMapElapsed, performanceOtherElapsed, static_cast<uint32>(GetActiveSessionCount()));
+        }
+
+        const uint32 performanceWindowElapsed = WorldTimer::getMSTimeDiff(performanceWindowStart, WorldTimer::getMSTime());
+        if (performanceWindowElapsed >= getConfig(CONFIG_UINT32_PERFORMANCE_LOG_SUMMARY_INTERVAL_MS))
+        {
+            const uint64 updateCount = std::max<uint64>(1, performanceWindowUpdates);
+            sLog.outPerformance("WORLD_SUMMARY window=%u ms updates=%llu avg=%llu ms max=%u ms slow=%u avg_bots=%llu ms avg_sessions=%llu ms avg_maps=%llu ms sessions_online=%u map_threads=%u",
+                performanceWindowElapsed, static_cast<unsigned long long>(performanceWindowUpdates),
+                static_cast<unsigned long long>(performanceWindowTotal / updateCount), performanceWindowMaximum,
+                performanceWindowSlowUpdates, static_cast<unsigned long long>(performanceWindowBots / updateCount),
+                static_cast<unsigned long long>(performanceWindowSessions / updateCount),
+                static_cast<unsigned long long>(performanceWindowMaps / updateCount), static_cast<uint32>(GetActiveSessionCount()),
+                getConfig(CONFIG_UINT32_NUM_MAP_THREADS));
+
+            performanceWindowStart = WorldTimer::getMSTime();
+            performanceWindowUpdates = 0;
+            performanceWindowTotal = 0;
+            performanceWindowBots = 0;
+            performanceWindowSessions = 0;
+            performanceWindowMaps = 0;
+            performanceWindowMaximum = 0;
+            performanceWindowSlowUpdates = 0;
+        }
+    }
 #ifdef BUILD_METRICS
     auto updateEndTime = std::chrono::time_point_cast<std::chrono::milliseconds>(Clock::now());
     long long total = (updateEndTime - m_currentTime).count();

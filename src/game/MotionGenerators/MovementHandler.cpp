@@ -321,6 +321,18 @@ void WorldSession::HandleMoveTeleportAckOpcode(WorldPacket& recv_data)
     plMover->m_movementInfo.ChangePosition(dest.coord_x, dest.coord_y, dest.coord_z, dest.orientation);
 #endif
 
+    plMover->SetFallInformation(0, dest.coord_z);
+
+    // A near teleport can also cross one of the internal continent
+    // partitions (notably boats and zeppelins). Move the server-side player
+    // to the matching map copy after the client acknowledges the position.
+    if (sWorld.getConfig(CONFIG_BOOL_CONTINENTS_INSTANCIATE) && plMover->GetMap()->IsContinent())
+    {
+        uint32 const partitionId = sMapMgr.GetContinentInstanceId(plMover->GetMapId(), dest.coord_x, dest.coord_y);
+        if (partitionId != plMover->GetInstanceId())
+            sMapMgr.ScheduleInstanceSwitch(plMover, partitionId);
+    }
+
     GenericTransport* currentTransport = nullptr;
     if (plMover->m_teleportTransport)
         currentTransport = plMover->GetMap()->GetTransport(plMover->m_teleportTransport);

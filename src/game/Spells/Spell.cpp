@@ -5191,6 +5191,21 @@ SpellCastResult Spell::CheckCast(bool strict)
         if (m_spellInfo->CasterAuraStateNot && m_caster->HasAuraState(AuraState(m_spellInfo->CasterAuraStateNot)))
             return SPELL_FAILED_CASTER_AURASTATE;
 
+        if (!m_IsTriggeredSpell && (m_spellInfo->AuraInterruptFlags & AURA_INTERRUPT_FLAG_UNDERWATER_CANCELS))
+        {
+            // Account for both the client swimming state and sufficiently deep liquid.
+            if (m_caster->m_movementInfo.HasMovementFlag(MOVEFLAG_SWIMMING) ||
+                (m_caster->IsInWater() && (!m_caster->IsPlayer() || static_cast<Player*>(m_caster)->IsInHighLiquid())))
+                return SPELL_FAILED_ONLY_ABOVEWATER;
+        }
+
+        if (!m_IsTriggeredSpell && (m_spellInfo->AuraInterruptFlags & AURA_INTERRUPT_FLAG_ABOVEWATER_CANCELS))
+        {
+            if (!m_caster->m_movementInfo.HasMovementFlag(MOVEFLAG_SWIMMING) || !m_caster->IsInWater() ||
+                (m_caster->IsPlayer() && !static_cast<Player*>(m_caster)->IsInHighLiquid()))
+                return SPELL_FAILED_ONLY_UNDERWATER;
+        }
+
         if (!m_IsTriggeredSpell && NeedsComboPoints(m_spellInfo) && (!m_targets.getUnitTarget() || m_targets.getUnitTarget()->GetObjectGuid() != m_caster->GetComboTargetGuid()))
             // warrior not have real combo-points at client side but use this way for mark allow Overpower use
             return m_caster->getClass() == CLASS_WARRIOR ? SPELL_FAILED_CASTER_AURASTATE : SPELL_FAILED_NO_COMBO_POINTS;
@@ -6359,9 +6374,6 @@ SpellCastResult Spell::CheckCast(bool strict)
             }
             case SPELL_AURA_MOUNTED:
             {
-                if (m_caster->IsInWater() && (m_caster->GetTypeId() != TYPEID_PLAYER || static_cast<Player*>(m_caster)->IsInHighLiquid()))
-                    return SPELL_FAILED_ONLY_ABOVEWATER;
-
                 if (m_caster->GetTypeId() == TYPEID_PLAYER && ((Player*)m_caster)->GetTransport())
                     return SPELL_FAILED_NO_MOUNTS_ALLOWED;
 

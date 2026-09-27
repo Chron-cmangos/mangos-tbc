@@ -36,6 +36,9 @@
 
 #include "Policies/Singleton.h"
 
+#include <algorithm>
+#include <limits>
+
 #ifdef ENABLE_MODULES
 #include "ModuleMgr.h"
 #endif
@@ -944,7 +947,11 @@ bool AuctionEntry::BuildAuctionInfo(WorldPacket& data) const
     data << uint32(startbid);                               // Auction->startbid (not sure if useful)
     data << uint32(bid ? GetAuctionOutBid() : 0);           // minimal outbid
     data << uint32(buyout);                                 // auction->buyout
-    data << uint32((expireTime - time(nullptr))*IN_MILLISECONDS); // time left
+    int64 const timeLeftMs = std::clamp<int64>(
+        int64(expireTime - time(nullptr)) * IN_MILLISECONDS,
+        0,
+        std::numeric_limits<int32>::max());
+    data << uint32(timeLeftMs);  
     data << ObjectGuid(HIGHGUID_PLAYER, bidder);            // auction->bidder current
     data << uint32(bid);                                    // current bid
     return true;

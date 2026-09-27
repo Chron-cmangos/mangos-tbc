@@ -157,7 +157,7 @@ class WorldPersistentState : public MapPersistentState
            - any new non-instanceable map created
            - respawn data loading for non-instanceable map
         */
-        explicit WorldPersistentState(uint16 MapId) : MapPersistentState(MapId, 0, REGULAR_DIFFICULTY) {}
+        explicit WorldPersistentState(uint16 MapId, uint32 InstanceId = 0) : MapPersistentState(MapId, InstanceId, REGULAR_DIFFICULTY) {}
 
         ~WorldPersistentState() {}
     protected:
@@ -321,9 +321,10 @@ class DungeonResetScheduler
         ResetTimeQueue m_resetTimeQueue;
 };
 
-class MapPersistentStateManager : public MaNGOS::Singleton<MapPersistentStateManager, MaNGOS::ClassLevelLockable<MapPersistentStateManager, std::mutex> >
+class MapPersistentStateManager : public MaNGOS::Singleton<MapPersistentStateManager, MaNGOS::ClassLevelLockable<MapPersistentStateManager, std::recursive_mutex> >
 {
         friend class DungeonResetScheduler;
+        typedef MaNGOS::ClassLevelLockable<MapPersistentStateManager, std::recursive_mutex>::Lock Guard;
     public:                                                 // constructors
         MapPersistentStateManager();
         ~MapPersistentStateManager();
@@ -345,7 +346,7 @@ class MapPersistentStateManager : public MaNGOS::Singleton<MapPersistentStateMan
         void RemovePersistentState(uint32 mapId, uint32 instanceId);
 
         template<typename Do>
-        void DoForAllStatesWithMapId(uint32 mapId, Do& _do);
+        void DoForAllStatesWithMapId(uint32 mapId, uint32 instanceId, Do& _do);
 
     public:                                                 // DungeonPersistentState specific
         void CleanupInstances();
@@ -380,8 +381,10 @@ class MapPersistentStateManager : public MaNGOS::Singleton<MapPersistentStateMan
 };
 
 template<typename Do>
-inline void MapPersistentStateManager::DoForAllStatesWithMapId(uint32 mapId, Do& _do)
+inline void MapPersistentStateManager::DoForAllStatesWithMapId(uint32 mapId, uint32 instanceId, Do& _do)
 {
+    Guard guard(*this);
+
     MapEntry const* mapEntry = sMapStore.LookupEntry(mapId);
     if (!mapEntry)
         return;
@@ -398,7 +401,7 @@ inline void MapPersistentStateManager::DoForAllStatesWithMapId(uint32 mapId, Do&
     }
     else
     {
-        if (MapPersistentState* state = GetPersistentState(mapId, 0))
+        if (MapPersistentState* state = GetPersistentState(mapId, instanceId))
             _do(state);
     }
 }

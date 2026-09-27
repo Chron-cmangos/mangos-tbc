@@ -9,7 +9,8 @@ add_library(cmangos-compile-option-interface INTERFACE)
 # Enable extended object support for debug compiles on X64 (not required on X86)
 target_compile_options(cmangos-compile-option-interface
   INTERFACE
-    /bigobj)
+    /bigobj
+    /EHsc)
 message(STATUS "MSVC: Enabled increased number of sections in object files")
 
 # multithreaded compiling on VS

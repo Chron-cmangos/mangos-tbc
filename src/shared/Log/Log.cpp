@@ -70,7 +70,7 @@ const int LogType_count = int(LogError) + 1;
 
 Log::Log() :
     raLogfile(nullptr), logfile(nullptr), gmLogfile(nullptr), charLogfile(nullptr), dberLogfile(nullptr),
-    eventAiErLogfile(nullptr), scriptErrLogFile(nullptr), worldLogfile(nullptr), customLogFile(nullptr), m_colored(false), m_includeTime(false), m_gmlog_per_account(false), m_scriptLibName(nullptr)
+    eventAiErLogfile(nullptr), scriptErrLogFile(nullptr), worldLogfile(nullptr), customLogFile(nullptr), performanceLogFile(nullptr), m_colored(false), m_includeTime(false), m_gmlog_per_account(false), m_scriptLibName(nullptr)
 {
     Initialize();
 }
@@ -272,6 +272,15 @@ void Log::Initialize()
     worldLogfile = openLogFile("WorldLogFile", "WorldLogTimestamp", "a");
     scriptErrLogFile = openLogFile("SD2ErrorLogFile", nullptr, "a");
     customLogFile = openLogFile("CustomLogFile", nullptr, "a");
+    performanceLogFile = openLogFile("PerformanceLogFile", "PerformanceLogTimestamp", "a");
+
+    // Architecture test builds should produce useful diagnostics even when an
+    // existing mangosd.conf has not yet been updated with the new setting.
+    if (!performanceLogFile && !sConfig.IsSet("PerformanceLogFile"))
+    {
+        std::string performanceLogName = m_logsDir + "Performance.log";
+        performanceLogFile = fopen(performanceLogName.c_str(), "a");
+    }
 
     // Main log file settings
     m_includeTime  = sConfig.GetBoolDefault("LogTime", false);
@@ -971,6 +980,24 @@ void Log::outCustomLog(const char* str, ...)
     }
 
     fflush(stdout);
+}
+
+void Log::outPerformance(const char* str, ...)
+{
+    if (!str)
+        return;
+
+    std::lock_guard<std::mutex> guard(m_worldLogMtx);
+    if (performanceLogFile)
+    {
+        va_list ap;
+        outTimestamp(performanceLogFile);
+        va_start(ap, str);
+        vfprintf(performanceLogFile, str, ap);
+        fprintf(performanceLogFile, "\n");
+        va_end(ap);
+        fflush(performanceLogFile);
+    }
 }
 
 void Log::WaitBeforeContinueIfNeed()

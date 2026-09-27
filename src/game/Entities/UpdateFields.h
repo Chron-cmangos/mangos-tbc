@@ -492,6 +492,7 @@ struct UpdateFieldData
 namespace UpdateFields
 {
     uint16 const* GetUpdateFieldFlagsArray(uint8 objectTypeId);
+    bool const* GetGuidFieldStartArray(uint8 objectTypeId);
     UpdateFieldData const* GetUpdateFieldDataByName(char const* name);
     UpdateFieldData const* GetUpdateFieldDataByTypeMaskAndOffset(uint8 objectTypeMask, uint16 offset);
 };

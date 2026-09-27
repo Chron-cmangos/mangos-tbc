@@ -23,6 +23,7 @@
 #include "Database/DatabaseEnv.h"
 #include "World/World.h"
 #include "Globals/ObjectMgr.h"
+#include "Maps/MapManager.h"
 
 Corpse::Corpse(CorpseType type) : WorldObject(),
     lootRecipient(nullptr),
@@ -233,6 +234,12 @@ bool Corpse::LoadFromDB(uint32 lowguid, Field* fields)
     SetUInt32Value(CORPSE_FIELD_FLAGS, flags);
 
     // no need to mark corpse as lootable, because corpses are not saved in battle grounds
+
+    // Continental maps are split into internal partitions when enabled. Recompute
+    // the partition from the corpse coordinates so older instance-0 rows continue
+    // to load on the correct map copy.
+    if (mapid <= 1)
+        instanceid = sMapMgr.GetContinentInstanceId(mapid, positionX, positionY);
 
     // place
     SetLocationInstanceId(instanceid);

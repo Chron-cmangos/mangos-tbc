@@ -147,11 +147,19 @@ void WorldSocket::SendPacket(const WorldPacket& pct)
 
 bool WorldSocket::OnOpen()
 {
+    boost::system::error_code ec;
     if (sConfig.GetBoolDefault("Network.TcpNodelay", true))
-    {
-        boost::system::error_code ec;
         GetAsioSocket().set_option(boost::asio::ip::tcp::no_delay(true), ec);
-    }
+    
+    int32 const sendBuffer = sConfig.GetIntDefault("Network.OutKBuff", -1);
+    if (sendBuffer > 0)
+        GetAsioSocket().set_option(boost::asio::socket_base::send_buffer_size(sendBuffer), ec);
+
+    int32 const receiveBuffer = sConfig.GetIntDefault("Network.InKBuff", -1);
+    if (receiveBuffer > 0)
+        GetAsioSocket().set_option(boost::asio::socket_base::receive_buffer_size(receiveBuffer), ec);
+
+    GetAsioSocket().set_option(boost::asio::socket_base::keep_alive(true), ec);
 
     // Send startup packet.
     WorldPacket packet(SMSG_AUTH_CHALLENGE, 4);

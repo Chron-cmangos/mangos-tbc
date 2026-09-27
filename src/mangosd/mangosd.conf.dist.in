@@ -229,6 +229,108 @@ Spawns.ZoneArea = 0
 #        Default: 3
 #        Don't put more thread then your number of CPU threads -1 for this to work stable.
 #
+#    MapUpdate.ObjectThreads
+#        Separate worker pool for building object update packets inside continent maps.
+#        Gameplay, AI, scripts and motion remain ordered on their map thread.
+#        Default: 1
+#
+#    MapUpdate.VisibilityChunkSize
+#        Work chunk size for parallel client update packet building.
+#        Default: 64 objects
+#
+#    Playerbot.StaggerBackgroundUpdates
+#        Spread non-critical background bot updates across world ticks instead of updating
+#        every background bot on the same tick. Bots near real players, grouped with a real
+#        player, in combat, or in a battleground are still updated immediately.
+#        Default: 1 (enable)
+#
+#    PerformanceLog.Enabled
+#        Enable world, map, and Playerbot performance diagnostics.
+#        Default: 1 (enable)
+#
+#    PerformanceLog.SlowWorldUpdateMs
+#    PerformanceLog.SlowMapUpdateMs
+#    PerformanceLog.SlowBotUpdateMs
+#    PerformanceLog.SlowSessionUpdateMs
+#    PerformanceLog.SlowPacketMs
+#    PerformanceLog.SlowAsyncDbMs
+#    PerformanceLog.SlowDbCallbackMs
+#        Write a detailed record when the corresponding update meets or exceeds this time.
+#        Defaults: 200, 100, 50, 50, 25, 100, and 50 milliseconds.
+#
+#    PerformanceLog.SummaryIntervalMs
+#        Interval for aggregate world update summaries.
+#        Default: 60000 (one minute)
+#
+#    AdaptiveLoad.Enabled
+#        Reduce idle-map work and temporarily reduce visibility during sustained slow world ticks.
+#        Default: 1 (enable)
+#
+#    AdaptiveLoad.EmptyMapUpdateMs
+#        Update interval for maps without players. Elapsed time is accumulated so game timers remain correct.
+#        Default: 500 milliseconds
+#
+#    AdaptiveLoad.SlowWorldMs
+#    AdaptiveLoad.RecoverWorldMs
+#        Slow/recovery thresholds used by adaptive visibility.
+#        Defaults: 250 and 120 milliseconds
+#
+#    AdaptiveLoad.MinVisibilityPercent
+#    AdaptiveLoad.VisibilityStepPercent
+#        Visibility floor and the size of each recovery/load-shedding step.
+#        Defaults: 70 and 5 percent
+#
+#    MovementCompression.Enabled
+#        Group nearby movement broadcasts into the client's SMSG_COMPRESSED_MOVES format.
+#        Playerbot sessions continue to receive original movement packets.
+#        Default: 1 (enable)
+#
+#    MovementCompression.MinPackets
+#        Minimum number of movement packets to group before compression.
+#        Default: 3
+#
+#    MovementBroadcast.Threads
+#        Dedicated FIFO worker lanes used to compress and queue movement packets.
+#        A client is always assigned to one lane, preserving packet order.
+#        Default: 1
+#
+#    MovementBroadcast.MaxQueuedBatches
+#        Per-lane backpressure limit. Map workers wait briefly if a lane reaches it
+#        instead of dropping or reordering movement.
+#        Default: 32768
+#
+#    DynamicRespawn.Range
+#    DynamicRespawn.PercentPerPlayer
+#    DynamicRespawn.MaxReductionRate
+#        Optional open-world dynamic respawn scaling. Range <= 0 disables it.
+#        PercentPerPlayer is applied for each nearby player above PlayersThreshold;
+#        MaxReductionRate is a 0.0-1.0 cap on the total reduction.
+#        Defaults: -1, 0, and 0 (disabled)
+#
+#    DynamicRespawn.MinRespawnTime
+#    DynamicRespawn.MinEliteRespawnTime
+#    DynamicRespawn.MinIndoorRespawnTime
+#        Minimum respawn delays, in seconds, after dynamic scaling.
+#        Defaults: 0, 0, and 0
+#
+#    DynamicRespawn.AffectRespawnTimeBelow
+#    DynamicRespawn.AffectLevelBelow
+#    DynamicRespawn.PlayersThreshold
+#    DynamicRespawn.PlayersMaxLevelDiff
+#        Limits for which ordinary continent spawns and nearby players count.
+#        Defaults: 0, 0, 0, and 0
+#
+#    DynamicRespawn.AllowElites
+#        Allow nonscripted elite spawns to use dynamic scaling. Bosses, scripted,
+#        grouped, pooled, and event spawns remain excluded.
+#        Default: 0 (disable)
+#
+#    Continents.Instanciate
+#        Partition Eastern Kingdoms and Kalimdor into independent map instances.
+#        Players switch partitions transparently at the vMaNGOS boundaries. This
+#        reduces one-continent lock contention but uses additional map state.
+#        Default: 0 (disable)
+#
 #    MaxCoreStuckTime
 #        Periodically check if the process got freezed, if this is the case force crash after the specified
 #        amount of seconds. Must be > 0. Recommended > 10 secs if you use this.
@@ -282,6 +384,40 @@ PathFinder.OptimizePath = 1
 PathFinder.NormalizeZ = 0
 UpdateUptimeInterval = 10
 MapUpdate.Threads = 3
+MapUpdate.ObjectThreads = 1
+MapUpdate.VisibilityChunkSize = 64
+Playerbot.StaggerBackgroundUpdates = 1
+PerformanceLog.Enabled = 1
+PerformanceLog.SlowWorldUpdateMs = 200
+PerformanceLog.SlowMapUpdateMs = 100
+PerformanceLog.SlowBotUpdateMs = 50
+PerformanceLog.SlowSessionUpdateMs = 50
+PerformanceLog.SlowPacketMs = 25
+PerformanceLog.SlowAsyncDbMs = 100
+PerformanceLog.SlowDbCallbackMs = 50
+PerformanceLog.SummaryIntervalMs = 60000
+AdaptiveLoad.Enabled = 1
+AdaptiveLoad.EmptyMapUpdateMs = 500
+AdaptiveLoad.SlowWorldMs = 250
+AdaptiveLoad.RecoverWorldMs = 120
+AdaptiveLoad.MinVisibilityPercent = 70
+AdaptiveLoad.VisibilityStepPercent = 5
+MovementCompression.Enabled = 1
+MovementCompression.MinPackets = 3
+MovementBroadcast.Threads = 1
+MovementBroadcast.MaxQueuedBatches = 32768
+DynamicRespawn.Range = -1
+DynamicRespawn.PercentPerPlayer = 0
+DynamicRespawn.MaxReductionRate = 0
+DynamicRespawn.MinRespawnTime = 0
+DynamicRespawn.MinEliteRespawnTime = 0
+DynamicRespawn.MinIndoorRespawnTime = 0
+DynamicRespawn.AffectRespawnTimeBelow = 0
+DynamicRespawn.AffectLevelBelow = 0
+DynamicRespawn.PlayersThreshold = 0
+DynamicRespawn.PlayersMaxLevelDiff = 0
+DynamicRespawn.AllowElites = 0
+Continents.Instanciate = 0
 MaxCoreStuckTime = 0
 AddonChannel = 1
 CleanCharacterDB = 1
@@ -317,6 +453,16 @@ AccountData = 0
 #        Logfile name
 #        Default: "Server.log"
 #                 "" - Empty name disable creating log file
+#
+#    PerformanceLogFile
+#        Flushed performance diagnostics for world, map, and Playerbot updates. Keeping this
+#        beside the matching crash dump and PDB makes post-crash analysis substantially easier.
+#        Default: "Performance.log"
+#                 "" - Empty name disables the performance log file
+#
+#    PerformanceLogTimestamp
+#        Add the server start timestamp to PerformanceLogFile.
+#        Default: 0
 #
 #    PacketLogFile
 #        Description: Binary packet logging file for the world server.
@@ -429,6 +575,8 @@ PidFile = ""
 LogLevel = 1
 LogTime = 0
 LogFile = "Server.log"
+PerformanceLogFile = "Performance.log"
+PerformanceLogTimestamp = 0
 PacketLogFile = ""
 LogTimestamp = 0
 LogFileLevel = 0
@@ -1770,10 +1918,18 @@ OutdoorPvp.NAEnabled = 1
 #
 #    Network.Threads
 #        Number of threads for network, recommend 1 thread per 1000 connections.
-#        Default: 1
+#        Default: 2
+#
+#    Network.ListenBacklog
+#        Maximum number of pending TCP connections waiting to be accepted.
+#        Default: 4096
 #
 #    Network.OutKBuff
 #        The size of the output kernel buffer used ( SO_SNDBUF socket option, tcp manual ).
+#        Default: -1 (Use system default setting)
+#
+#    Network.InKBuff
+#        The size of the input kernel buffer used (SO_RCVBUF socket option).
 #        Default: -1 (Use system default setting)
 #
 #    Network.OutUBuff
@@ -1792,8 +1948,10 @@ OutdoorPvp.NAEnabled = 1
 #
 ###################################################################################################################
 
-Network.Threads = 1
+Network.Threads = 2
+Network.ListenBacklog = 4096
 Network.OutKBuff = -1
+Network.InKBuff = -1
 Network.OutUBuff = 65536
 Network.TcpNodelay = 1
 Network.KickOnBadPacket = 0

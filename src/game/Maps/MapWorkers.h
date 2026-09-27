@@ -24,6 +24,7 @@
 #include "MapUpdater.h"
 #include "MotionGenerators/MovementGenerator.h"
 #include "Entities/Object.h"
+#include "Entities/UpdateData.h"
 #include "Platform/Define.h"
 
 class Worker
@@ -88,24 +89,24 @@ class GridCrawler : public Worker
 };
 
 
-class ObjectUpdateWorker : public Worker
+class ObjectUpdateBuildWorker : public Worker
 {
     public:
-        ObjectUpdateWorker(std::unordered_set<WorldObject*>& objects, uint32 diff, MapUpdater& updater) :
-            Worker(updater), m_objects(objects), m_diff(diff)
+        ObjectUpdateBuildWorker(std::vector<Object*>&& objects, UpdateDataMapType& updates, MapUpdater& updater) :
+            Worker(updater), m_objects(std::move(objects)), m_updates(updates)
         {}
 
         void execute() override
         {
-            for (WorldObject* const &object : m_objects)
-                object->Update(m_diff);
+            for (Object* object : m_objects)
+                object->BuildUpdateData(m_updates);
 
             GetWorker().update_finished();
         }
 
     private:
-        std::unordered_set<WorldObject*>& m_objects;
-        uint32 m_diff;
+        std::vector<Object*> m_objects;
+        UpdateDataMapType& m_updates;
 };
 
 #endif //_MAP_WORKERS_H_INCLUDED

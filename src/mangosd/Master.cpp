@@ -219,7 +219,7 @@ int Master::Run()
     }
 
     {
-        int32 networkThreadCount = sConfig.GetIntDefault("Network.Threads", 1);
+        int32 networkThreadCount = sConfig.GetIntDefault("Network.Threads", 2);
         if (networkThreadCount <= 0)
         {
             sLog.outError("Invalid network thread workers setting in mangosd.conf. (%d) should be > 0", networkThreadCount);
@@ -227,7 +227,13 @@ int Master::Run()
         }
         std::string bindIp = sConfig.GetStringDefault("BindIP", "0.0.0.0");
         int32 port = int32(sWorld.getConfig(CONFIG_UINT32_PORT_WORLD));
-        MaNGOS::AsyncListener<WorldSocket> listener(m_context, bindIp, port);
+        int32 listenBacklog = sConfig.GetIntDefault("Network.ListenBacklog", 4096);
+        if (listenBacklog <= 0)
+            listenBacklog = 4096;
+        MaNGOS::AsyncListener<WorldSocket> listener(m_context, bindIp, port, listenBacklog);
+
+        sLog.outString("Network backend: %s; workers: %d; listen backlog: %d",
+            MaNGOS::GetAsyncIoBackendName(), networkThreadCount, listenBacklog);
 
         std::vector<std::thread> threads;
         for (int32 i = 0; i < networkThreadCount; ++i)
