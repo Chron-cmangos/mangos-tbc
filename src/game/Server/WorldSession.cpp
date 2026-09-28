@@ -644,7 +644,7 @@ void WorldSession::ProcessByteBufferException(WorldPacket const& packet)
 }
 
 /// Update the WorldSession (triggered by World update)
-bool WorldSession::Update(uint32 /*diff*/)
+bool WorldSession::Update(uint32 diff)
 {
     struct SessionUpdatePerformanceGuard
     {

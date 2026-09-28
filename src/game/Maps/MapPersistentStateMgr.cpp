@@ -801,9 +801,13 @@ void MapPersistentStateManager::CleanupInstances()
     _DelHelper(CharacterDatabase, "character_instance.guid, instance", "character_instance", "LEFT JOIN instance ON character_instance.instance = instance.id WHERE instance.id IS NULL");
     _DelHelper(CharacterDatabase, "group_instance.leaderGuid, instance", "group_instance", "LEFT JOIN instance ON group_instance.instance = instance.id WHERE instance.id IS NULL");
 
-    // clean unused respawn data
-    CharacterDatabase.Execute("DELETE FROM creature_respawn WHERE instance <> 0 AND instance NOT IN (SELECT id FROM instance)");
-    CharacterDatabase.Execute("DELETE FROM gameobject_respawn WHERE instance <> 0 AND instance NOT IN (SELECT id FROM instance)");
+    // Continent partition ids have no dungeon instance row. Preserve both
+    // reserved ranges even when partitioning is disabled on this startup.
+    // All other nonzero ids still require a valid dungeon save.
+    CharacterDatabase.PExecute("DELETE FROM creature_respawn WHERE instance <> 0 AND instance NOT BETWEEN %u AND %u AND instance NOT BETWEEN %u AND %u AND instance NOT IN (SELECT id FROM instance)",
+        uint32(MAP0_TOP_NORTH), uint32(MAP0_SOUTH), uint32(MAP1_NORTH), uint32(MAP1_SOUTH));
+    CharacterDatabase.PExecute("DELETE FROM gameobject_respawn WHERE instance <> 0 AND instance NOT BETWEEN %u AND %u AND instance NOT BETWEEN %u AND %u AND instance NOT IN (SELECT id FROM instance)",
+        uint32(MAP0_TOP_NORTH), uint32(MAP0_SOUTH), uint32(MAP1_NORTH), uint32(MAP1_SOUTH));
     // execute transaction directly
     CharacterDatabase.CommitTransaction();
 
@@ -1053,9 +1057,9 @@ void MapPersistentStateManager::LoadCreatureRespawnTimes()
         if (!mapEntry->Instanceable() && data->mapid <= 1)
             instanceId = sMapMgr.GetContinentInstanceId(data->mapid, data->posX, data->posY);
 
-        if (mapId != data->mapid)
-            continue;
-        if (mapEntry->Instanceable() && !instanceId)
+        // The joined instance row supplies mapId only for dungeon saves.
+        // World respawns have no such row; their map comes from spawn data.
+        if (mapEntry->Instanceable() && (mapId != data->mapid || !instanceId))
             continue;
 
         if (difficulty >= (!mapEntry->Instanceable() ? REGULAR_DIFFICULTY + 1 : MAX_DIFFICULTY))
@@ -1120,9 +1124,9 @@ void MapPersistentStateManager::LoadGameobjectRespawnTimes()
         if (!mapEntry->Instanceable() && data->mapid <= 1)
             instanceId = sMapMgr.GetContinentInstanceId(data->mapid, data->posX, data->posY);
 
-        if (mapId != data->mapid)
-            continue;
-        if (mapEntry->Instanceable() && !instanceId)
+        // The joined instance row supplies mapId only for dungeon saves.
+        // World respawns have no such row; their map comes from spawn data.
+        if (mapEntry->Instanceable() && (mapId != data->mapid || !instanceId))
             continue;
 
         if (difficulty >= (!mapEntry->Instanceable() ? REGULAR_DIFFICULTY + 1 : MAX_DIFFICULTY))

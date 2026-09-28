@@ -1427,7 +1427,7 @@ class Player : public Unit
         void RegenerateHealth(uint32 diff);
 
         uint32 GetMoney() const { return GetUInt32Value(PLAYER_FIELD_COINAGE); }
-        void ModifyMoney(int32 d)
+        void ModifyMoney(int32 d);
         void SetMoney(uint32 value)
         {
             SetUInt32Value(PLAYER_FIELD_COINAGE, value);
