@@ -26,6 +26,9 @@
 #include "Globals/ObjectMgr.h"
 #include "Entities/Player.h"
 #include "Groups/Group.h"
+#ifdef ENABLE_PLAYERBOTS
+#include "playerbot/BotRecruitment.h"
+#endif
 #include "Social/SocialMgr.h"
 #include "Util/Util.h"
 #include "Anticheat/Anticheat.hpp"
@@ -82,7 +85,8 @@ void WorldSession::HandleGroupInviteOpcode(WorldPacket& recv_data)
         return;
     }
 
-    if (initiator->GetMap()->Instanceable() && recipient->GetMap()->Instanceable() &&
+    if (initiator->GetMap() && recipient->GetMap() &&
+        initiator->GetMap()->Instanceable() && recipient->GetMap()->Instanceable() &&
         initiator->GetInstanceId() != 0 && recipient->GetInstanceId() != 0 &&
         initiator->GetInstanceId() != recipient->GetInstanceId() && initiator->GetMapId() == recipient->GetMapId())
     {
@@ -144,6 +148,11 @@ void WorldSession::HandleGroupInviteOpcode(WorldPacket& recv_data)
         }
     }
 
+#ifdef ENABLE_PLAYERBOTS
+    if (!ai::BotRecruitment::CanInvite(initiator, recipient))
+        return;
+#endif
+
     // ok, but group not exist, start a new group
     // but don't create and save the group to the DB until
     // at least one person joins
@@ -174,6 +183,10 @@ void WorldSession::HandleGroupInviteOpcode(WorldPacket& recv_data)
 
     // Record targets for uniqueness when spamming
     GetAnticheat()->PartyInvite(recipient->GetObjectGuid());
+
+#ifdef ENABLE_PLAYERBOTS
+    ai::BotRecruitment::OnInvite(initiator, recipient);
+#endif
 
     // ok, we do it
     WorldPacket data(SMSG_GROUP_INVITE, 10);                // guess size

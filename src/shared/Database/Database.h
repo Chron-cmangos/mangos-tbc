@@ -208,6 +208,9 @@ class Database
 
         // set database-wide result queue. also we should use object-bases and not thread-based result queues
         void ProcessResultQueue();
+        void ProcessResultQueue(uint32 maxMilliseconds = 0);
+        size_t GetPendingResultCount() const;
+        size_t GetPendingAsyncOperationCount() const;
 
         bool CheckRequiredField(char const* table_name, char const* required_name);
         uint32 GetPingIntervall() const { return m_pingIntervallms; }

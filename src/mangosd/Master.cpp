@@ -34,6 +34,7 @@
 #include "revision_sql.h"
 #include "MaNGOSsoap.h"
 #include "Mails/MassMailMgr.h"
+#include "Maps/Map.h"
 #include "Server/DBCStores.h"
 
 #include "Config/Config.h"
@@ -44,6 +45,9 @@
 
 #include <boost/thread.hpp>
 
+#include <array>
+#include <cstdio>
+#include <ctime>
 #include <memory>
 
 #ifdef _WIN32
@@ -59,6 +63,20 @@ volatile bool Master::m_canBeKilled = false;
 
 class FreezeDetectorRunnable : public MaNGOS::Runnable
 {
+        struct WatchdogSample
+        {
+            std::time_t capturedAt = 0;
+            uint32 worldLoop = 0;
+            uint32 currentDiff = 0;
+            uint32 averageDiff = 0;
+            uint32 maxDiff = 0;
+            uint32 mapId = 0;
+            uint32 instanceId = 0;
+            uint32 mapPhase = 0;
+            size_t pendingResults = 0;
+            size_t pendingOperations = 0;
+        };
+
     public:
         FreezeDetectorRunnable() { _delaytime = 0; }
         uint32 m_loops, m_lastchange;
@@ -74,11 +92,28 @@ class FreezeDetectorRunnable : public MaNGOS::Runnable
             w_loops = 0;
             m_lastchange = 0;
             w_lastchange = 0;
+            std::array<WatchdogSample, 64> samples{};
+            size_t samplePosition = 0;
+            size_t sampleCount = 0;
             while (!World::IsStopped())
             {
                 MaNGOS::Thread::Sleep(1000);
 
                 uint32 curtime = WorldTimer::getMSTime();
+                WatchdogSample& sample = samples[samplePosition];
+                sample.capturedAt = std::time(nullptr);
+                sample.worldLoop = World::m_worldLoopCounter.load(std::memory_order_relaxed);
+                sample.currentDiff = World::GetCurrentDiff();
+                sample.averageDiff = World::GetAverageDiff();
+                sample.maxDiff = World::GetMaxDiff();
+                sample.mapId = Map::s_watchdogMapId.load(std::memory_order_relaxed);
+                sample.instanceId = Map::s_watchdogInstanceId.load(std::memory_order_relaxed);
+                sample.mapPhase = Map::s_watchdogPhase.load(std::memory_order_relaxed);
+                sample.pendingResults = CharacterDatabase.GetPendingResultCount();
+                sample.pendingOperations = CharacterDatabase.GetPendingAsyncOperationCount();
+                samplePosition = (samplePosition + 1) % samples.size();
+                if (sampleCount < samples.size())
+                    ++sampleCount;
 
                 // normal work
                 if (w_loops != World::m_worldLoopCounter)
@@ -90,6 +125,24 @@ class FreezeDetectorRunnable : public MaNGOS::Runnable
                 else if (WorldTimer::getMSTimeDiff(w_lastchange, curtime) > _delaytime)
                 {
                     sLog.outError("World Thread hangs, kicking out server!");
+                    std::string breadcrumbFile = sConfig.GetStringDefault("Watchdog.BreadcrumbFile", "StallBreadcrumb.log");
+                    if (FILE* file = std::fopen(breadcrumbFile.c_str(), "a"))
+                    {
+                        std::fprintf(file, "WATCHDOG_STALL captured=%lld stuck_ms=%u samples=%u\n",
+                            static_cast<long long>(std::time(nullptr)), WorldTimer::getMSTimeDiff(w_lastchange, curtime), static_cast<uint32>(sampleCount));
+                        const size_t first = (samplePosition + samples.size() - sampleCount) % samples.size();
+                        for (size_t i = 0; i < sampleCount; ++i)
+                        {
+                            WatchdogSample const& saved = samples[(first + i) % samples.size()];
+                            std::fprintf(file,
+                                "sample time=%lld loop=%u diff=%u avg=%u max=%u map=%u instance=%u phase=%u db_results=%llu db_ops=%llu\n",
+                                static_cast<long long>(saved.capturedAt), saved.worldLoop, saved.currentDiff, saved.averageDiff, saved.maxDiff,
+                                saved.mapId, saved.instanceId, saved.mapPhase, static_cast<unsigned long long>(saved.pendingResults),
+                                static_cast<unsigned long long>(saved.pendingOperations));
+                        }
+                        std::fflush(file);
+                        std::fclose(file);
+                    }
                     *((uint32 volatile*)nullptr) = 0;          // bang crash
                 }
             }

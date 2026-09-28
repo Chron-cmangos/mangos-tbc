@@ -35,8 +35,13 @@
 #include "Maps/InstanceData.h"
 #include "Entities/Object.h"
 #include "Entities/Transports.h"
+#include "Config/Config.h"
+#include "Util/Timer.h"
 
+#include <algorithm>
+#include <mutex>
 #include <string_view>
+#include <unordered_map>
 
 INSTANTIATE_SINGLETON_1(ScriptMgr);
 
@@ -54,6 +59,61 @@ constexpr std::array<std::string_view, SCRIPT_TYPE_MAX> scriptTableNames
     "dbscripts_on_relay",
     "internal_use",
 };
+
+namespace
+struct RepeatedDbScriptWarning
+{
+    uint32 windowStartMs;
+    uint32 lastReportMs;
+    uint32 suppressed;
+};
+
+std::mutex g_repeatedDbScriptWarningLock;
+std::unordered_map<uint64, RepeatedDbScriptWarning> g_repeatedDbScriptWarnings;
+
+uint64 MakeDbScriptWarningKey(char const* table, uint32 id, uint32 command, uint32 buddy, uint32 kind)
+{
+    uint64 hash = 1469598103934665603ULL;
+    for (char const* p = table; p && *p; ++p)
+    {
+        hash ^= static_cast<uint8>(*p);
+        hash *= 1099511628211ULL;
+    }
+    for (uint32 value : {id, command, buddy, kind})
+    {
+        hash ^= value;
+        hash *= 1099511628211ULL;
+    }
+    return hash;
+}
+
+bool ShouldReportDbScriptWarning(uint64 key, uint32& suppressed, uint32& windowMs)
+{
+    uint32 const now = WorldTimer::getMSTime();
+    uint32 const intervalMs = std::max<uint32>(1000, sConfig.GetIntDefault("Diagnostics.RepeatedWarningIntervalMs", 300000));
+    std::lock_guard<std::mutex> guard(g_repeatedDbScriptWarningLock);
+    auto itr = g_repeatedDbScriptWarnings.find(key);
+    if (itr == g_repeatedDbScriptWarnings.end())
+    {
+        if (g_repeatedDbScriptWarnings.size() >= 2048)
+            g_repeatedDbScriptWarnings.clear();
+        g_repeatedDbScriptWarnings.emplace(key, RepeatedDbScriptWarning{now, now, 0});
+        suppressed = 0;
+        windowMs = 0;
+        return true;
+    }
+
+    if (WorldTimer::getMSTimeDiff(itr->second.lastReportMs, now) < intervalMs)
+    {
+        ++itr->second.suppressed;
+        return false;
+    }
+
+    suppressed = itr->second.suppressed;
+    windowMs = WorldTimer::getMSTimeDiff(itr->second.windowStartMs, now);
+    itr->second = {now, now, 0};
+    return true;
+}
 
 ScriptMgr::ScriptMgr()
 {
@@ -1525,7 +1585,9 @@ std::pair<bool, bool> ScriptAction::GetScriptProcessTargets(WorldObject* origina
         {
             if (!originalSource && !originalTarget)
             {
-                sLog.outErrorDb(" DB-SCRIPTS: Process table `%s` id %u, command %u called without buddy %u, but no source for search available, skipping.", m_table, m_script->id, m_script->command, m_script->buddyEntry);
+                uint32 suppressed = 0, windowMs = 0;
+                if (ShouldReportDbScriptWarning(MakeDbScriptWarningKey(m_table, m_script->id, m_script->command, m_script->buddyEntry, 1), suppressed, windowMs))
+                    sLog.outErrorDb(" DB-SCRIPTS: Process table `%s` id %u, command %u called without buddy %u, but no source for search available, skipping. repeat_suppressed=%u window_ms=%u", m_table, m_script->id, m_script->command, m_script->buddyEntry, suppressed, windowMs);
                 return { false, false };
             }
 
@@ -1607,7 +1669,9 @@ std::pair<bool, bool> ScriptAction::GetScriptProcessTargets(WorldObject* origina
 
             if (buddies.empty() && m_script->command != SCRIPT_COMMAND_TERMINATE_SCRIPT)
             {
-                sLog.outErrorDb(" DB-SCRIPTS: Process table `%s` id %u, command %u has buddy %u not found in range %u of searcher %s (data-flags %u), skipping.", m_table, m_script->id, m_script->command, m_script->buddyEntry, m_script->searchRadiusOrGuid, origin->GetGuidStr().c_str(), m_script->data_flags);
+                uint32 suppressed = 0, windowMs = 0;
+                if (ShouldReportDbScriptWarning(MakeDbScriptWarningKey(m_table, m_script->id, m_script->command, m_script->buddyEntry, 2), suppressed, windowMs))
+                    sLog.outErrorDb(" DB-SCRIPTS: Process table `%s` id %u, command %u has buddy %u not found in range %u of searcher %s (data-flags %u), skipping. repeat_suppressed=%u window_ms=%u", m_table, m_script->id, m_script->command, m_script->buddyEntry, m_script->searchRadiusOrGuid, origin->GetGuidStr().c_str(), m_script->data_flags, suppressed, windowMs);
                 return { false, false };
             }
         }
@@ -2813,6 +2877,8 @@ bool ScriptAction::ExecuteDbscriptCommand(WorldObject* pSource, WorldObject* pTa
                 if (m_script->data_flags & SCRIPT_FLAG_COMMAND_ADDITIONAL) // no bounding radius
                 {
                     pTarget->GetNearPoint2dAt(pTarget->GetPositionX(), pTarget->GetPositionY(), x, y, m_script->moveDynamic.fixedDist, pTarget->GetAngle(source));
+                    // The 2D helper does not set z; seed the height search from the target.
+                    z = pTarget->GetPositionZ();
                     if (source)
                         source->UpdateAllowedPositionZ(x, y, z, pTarget->GetMap()); // update to LOS height if available
                 }
@@ -2831,6 +2897,11 @@ bool ScriptAction::ExecuteDbscriptCommand(WorldObject* pSource, WorldObject* pTa
                                         m_script->moveDynamic.minDist, (orientation == 0.0f ? nullptr : &orientation));
                 z = std::max(z, pTarget->GetPositionZ());
                 source->UpdateAllowedPositionZ(x, y, z);
+            }
+            if (!MaNGOS::IsValidMapCoord(x, y, z))
+            {
+                sLog.outErrorDb(" DB-SCRIPTS: Process table `%s` id %u, SCRIPT_COMMAND_MOVE_DYNAMIC produced invalid destination (%f, %f, %f), skipping.", m_table, m_script->id, x, y, z);
+                return false;
             }
             if ((m_script->textId[2] & 0x1) != 0) // make it main movegen
                 source->GetMotionMaster()->Clear(false, true);

@@ -3291,6 +3291,9 @@ SpellCastResult Spell::SpellStart(SpellCastTargets const* targets, Aura* trigger
 
     // create and add update event for this spell
     m_spellEvent = new SpellEvent(this);
+    // Cast checks and preparation can synchronously remove the caster's events.
+    // Keep the event-owned spell alive until this call finishes using it.
+    auto spellLifetime = m_spellEvent->GetSpellWeakPtr().lock();
     m_trueCaster->m_events.AddEvent(m_spellEvent, m_trueCaster->m_events.CalculateTime(1));
     m_trueCaster->SetNextUpdateTime(1);
 

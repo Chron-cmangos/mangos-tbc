@@ -709,6 +709,13 @@ uint32 Creature::ChooseDisplayId(const CreatureInfo* cinfo, const CreatureData* 
         if (cinfo->DisplayId[i])
             chanceTotal += cinfo->DisplayIdProbability[i];
 
+    if (!chanceTotal)
+    {
+        for (uint32 i = 0; i < MAX_CREATURE_MODEL; ++i)
+            if (cinfo->DisplayId[i])
+                return cinfo->DisplayId[i];
+    }
+
     int32 roll = irand(0, std::max(int32(chanceTotal) - 1, 0)); // avoid 0
     for (uint32 i = 0; i < MAX_CREATURE_MODEL; ++i)
     {

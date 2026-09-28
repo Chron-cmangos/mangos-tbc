@@ -1696,11 +1696,11 @@ void Player::RemovePlayerbotMgr()
     m_playerbotMgr = nullptr;
 }
 
-void Player::UpdateAI(const uint32 diff, bool minimal)
+void Player::UpdateAI(const uint32 diff, bool minimal, bool delayAlreadyAdvanced)
 {
     if (m_playerbotAI)
     {
-        m_playerbotAI->UpdateAI(diff, minimal);
+        m_playerbotAI->UpdateAI(diff, minimal, delayAlreadyAdvanced);
     }
 
     if (m_playerbotMgr)
@@ -6167,6 +6167,11 @@ void Player::UpdateSkillTrainedSpells(uint16 id, uint16 currVal)
                 removeSpell(pAbility->spellId, false, false, true);
                 continue;
             }
+
+            // SkillLineAbility can retain entries for removed spells. Do not
+            // repeatedly try to teach them on login or skill updates.
+            if (!sSpellTemplate.LookupEntry<SpellEntry>(pAbility->spellId))
+                continue;
 
             // Check race if set
             if (pAbility->racemask && !(pAbility->racemask & raceMask))
@@ -21519,18 +21524,20 @@ void Player::learnClassLevelSpells(bool includeHighLevelQuestRewards)
 
                     if (learnedSpell)
                     {
-                        bool learned = false;
+                        bool hasLearnEffect = false;
                         for (int j = 0; j < 3; ++j)
                         {
                             if (proto->Effect[j] == SPELL_EFFECT_LEARN_SPELL)
                             {
+                                hasLearnEffect = true;
                                 uint32 learnedSpell2 = proto->EffectTriggerSpell[j];
+                                if (!learnedSpell2 || !sSpellTemplate.LookupEntry<SpellEntry>(learnedSpell2))
+                                    continue;
                                 learnSpell(learnedSpell2, false);
-                                learned = true;
                             }
                         }
 
-                        if (!learned)
+                        if (!hasLearnEffect)
                         {
                             learnSpell(learnedSpell, false);
                         }

@@ -65,6 +65,18 @@ class GenericTransport;
 namespace MaNGOS { struct ObjectUpdater; }
 class Transport;
 
+#ifdef ENABLE_PLAYERBOTS
+struct IdleBotAIUpdateRequest
+{
+    Player* player;
+    uint32 elapsed;
+    uint32 mapId;
+    uint32 instanceId;
+    uint32 transitionGeneration;
+    uint32 dueSinceMs;
+};
+#endif
+
 // GCC have alternative #pragma pack(N) syntax and old gcc version not support pack(push,N), also any gcc version not support it at some platform
 #if defined( __GNUC__ )
 #pragma pack(1)
@@ -130,6 +142,12 @@ typedef std::unordered_map<uint32 /*zoneId*/, ZoneDynamicInfo> ZoneDynamicInfoMa
 
 class Map : public GridRefManager<NGridType>
 {
+    public:
+        static std::atomic<uint32> s_watchdogMapId;
+        static std::atomic<uint32> s_watchdogInstanceId;
+        static std::atomic<uint32> s_watchdogPhase;
+
+    private:
         friend class MapReference;
         friend class ObjectGridLoader;
         friend class ObjectWorldLoader;
@@ -159,6 +177,7 @@ class Map : public GridRefManager<NGridType>
         static void DeleteFromWorld(Player* pl);        // player object will deleted at call
 
         void VisitNearbyCellsOf(WorldObject* obj, TypeContainerVisitor<MaNGOS::ObjectUpdater, GridTypeMapContainer> &gridVisitor, TypeContainerVisitor<MaNGOS::ObjectUpdater, WorldTypeMapContainer> &worldVisitor);
+        void CollectNearbyCellsOf(WorldObject* obj, std::vector<Cell>& cells);
         virtual void Update(const uint32&);
 
         uint64 PerformObjectUpdate(uint32 t_diff, WorldObjectUnSet& objToUpdate);
@@ -417,6 +436,14 @@ class Map : public GridRefManager<NGridType>
         void CreatePlayerOnClient(Player* player);
 
         uint32 GetLoadedGridsCount();
+        uint32 GetAllocatedGridsCount() const;
+        uint32 GetPlayerCount() const { return static_cast<uint32>(m_mapRefManager.getSize()); }
+        uint32 GetActiveNonPlayerCount() const { return static_cast<uint32>(m_activeNonPlayers.size()); }
+#ifdef ENABLE_PLAYERBOTS
+        uint64 GetIdleBotSchedulerCapacity() const { return m_idleBotDueUpdates.capacity() + m_idleBotDispatchUpdates.capacity(); }
+        uint64 GetIdleBotCoreTimerEntries() const { return m_idleBotCoreDiff.size() + m_idleBotCoreTicks.size() + m_idleBotFirstDueMs.size(); }
+        void GetPlayerbotAIObjectStats(uint64& aiObjects, uint64& strategies, uint64& actions, uint64& triggers, uint64& values);
+#endif
 
         Messager<Map>& GetMessager() { return m_messager; }
 
@@ -514,6 +541,10 @@ class Map : public GridRefManager<NGridType>
         uint32 m_clientUpdateTick;
         float m_VisibleDistance;
         float m_BaseVisibleDistance;
+        uint32 m_LastSlowMapDetailMs = 0;
+        uint32 m_SuppressedSlowMapDetails = 0;
+        uint32 m_PeakSuppressedSlowMapMs = 0;
+        uint32 m_CellParallelDisabledUntilMs = 0;
         MapPersistentState* m_persistentState;
 
         MapRefManager m_mapRefManager;
@@ -604,6 +635,14 @@ class Map : public GridRefManager<NGridType>
         std::vector<uint32> m_activeZones;
         uint32 m_activeZonesTimer;
         bool hasRealPlayers;
+        std::unordered_map<uint32, uint32> m_idleBotCoreDiff;
+        std::unordered_map<uint32, uint32> m_idleBotCoreTicks;
+        std::unordered_map<uint32, uint32> m_idleBotFirstDueMs;
+        std::vector<IdleBotAIUpdateRequest> m_idleBotDueUpdates;
+        std::vector<IdleBotAIUpdateRequest> m_idleBotDispatchUpdates;
+        size_t m_idleBotRoundRobinCursor;
+        uint32 m_backgroundBotBudgetPercent = 100;
+        uint32 m_backgroundBotRecoveryStreak = 0;
 #endif
 
         ZoneDynamicInfoMap m_zoneDynamicInfo;

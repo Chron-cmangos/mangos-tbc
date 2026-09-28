@@ -180,6 +180,11 @@ void UpdateData::SendData(WorldSession& session, bool forceSend/*= false*/)
     if (!HasData())
         return;
 
+#ifdef ENABLE_PLAYERBOTS
+    // Avoid compressing object-update payloads with no network consumer.
+    // After-create gameplay packets still reach the bot's outgoing handlers below.
+    if (session.HasClientSocket())
+#endif
     for (size_t i = 0; i < GetPacketCount(); ++i)
     {
         WorldPacket packet = BuildPacket(i);

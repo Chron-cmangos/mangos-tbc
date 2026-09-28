@@ -2225,7 +2225,7 @@ class Player : public Unit
 #ifdef ENABLE_PLAYERBOTS
         // A Player can either have a playerbotMgr (to manage its bots), or have playerbotAI (if it is a bot), or
         // neither. Code that enables bots must create the playerbotMgr and set it using SetPlayerbotMgr.
-        void UpdateAI(const uint32 diff, bool minimal = false);
+        void UpdateAI(const uint32 diff, bool minimal = false, bool delayAlreadyAdvanced = false);
         void CreatePlayerbotAI();
         void RemovePlayerbotAI();
         PlayerbotAI* GetPlayerbotAI() { return m_playerbotAI.get(); }

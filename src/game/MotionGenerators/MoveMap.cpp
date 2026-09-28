@@ -23,6 +23,29 @@
 
 namespace MMAP
 {
+    void MMapManager::RecordQueryAllocation(bool model)
+    {
+        if (model)
+            m_modelThreadQueries.fetch_add(1, std::memory_order_relaxed);
+        else
+            m_mapThreadQueries.fetch_add(1, std::memory_order_relaxed);
+        m_queryAllocations.fetch_add(1, std::memory_order_relaxed);
+        uint64 const current = m_mapThreadQueries.load(std::memory_order_relaxed) + m_modelThreadQueries.load(std::memory_order_relaxed);
+        uint64 high = m_queryHighWater.load(std::memory_order_relaxed);
+        while (current > high && !m_queryHighWater.compare_exchange_weak(high, current, std::memory_order_relaxed)) {}
+    }
+
+    void MMapManager::RecordQueryFree(bool model, uint64 count)
+    {
+        if (!count)
+            return;
+        if (model)
+            m_modelThreadQueries.fetch_sub(count, std::memory_order_relaxed);
+        else
+            m_mapThreadQueries.fetch_sub(count, std::memory_order_relaxed);
+        m_queryFrees.fetch_add(count, std::memory_order_relaxed);
+    }
+
     constexpr char MAP_FILE_NAME_FORMAT[] = "mmaps/%03i.mmap";
     constexpr char TILE_FILE_NAME_FORMAT[] = "mmaps/%03i%02i%02i.mmtile";
     constexpr char GO_FILE_NAME_FORMAT[] = "mmaps/go%04i.mmtile";
@@ -435,7 +458,14 @@ namespace MMAP
             }
         }
 
+        uint64 queryCount = 0;
+        {
+            std::lock_guard<std::mutex> guard(mmapData->navMeshQueriesMutex);
+            for (auto const& instanceQueries : mmapData->navMeshQueries)
+                queryCount += instanceQueries.second.size();
+        }
         loadedMMaps.erase(mapId);
+        RecordQueryFree(false, queryCount);
         DEBUG_FILTER_LOG(LOG_FILTER_MAP_LOADING, "MMAP:unloadMap: Unloaded %03i.mmap", mapId);
 
         return true;
@@ -460,9 +490,11 @@ namespace MMAP
             return false;
         }
 
+        uint64 const queryCount = instanceQueryItr->second.size();
         for (auto& threadQuery : instanceQueryItr->second)
             dtFreeNavMeshQuery(threadQuery.second);
         mmapData->navMeshQueries.erase(instanceQueryItr);
+        RecordQueryFree(false, queryCount);
         DEBUG_FILTER_LOG(LOG_FILTER_MAP_LOADING, "MMAP:unloadMapInstance: Unloaded mapId %03u instanceId %u", mapId, instanceId);
 
         return true;
@@ -513,6 +545,7 @@ namespace MMAP
         ss << threadId;
         DEBUG_FILTER_LOG(LOG_FILTER_MAP_LOADING, "MMAP:GetNavMeshQuery: created thread-local dtNavMeshQuery for mapId %03u instanceId %u tid %s", mapId, instanceId, ss.str().c_str());
         queryItr->second.emplace(threadId, query);
+        RecordQueryAllocation(false);
         return query;
     }
 
@@ -542,6 +575,7 @@ namespace MMAP
 
                 DETAIL_LOG("MMAP:GetModelNavMeshQuery: created dtNavMeshQuery for displayid %03u tid %s", displayId, ss.str().data());
                 mmapGOData->navMeshGOQueries.insert(std::pair<std::thread::id, dtNavMeshQuery*>(threadId, query));
+                RecordQueryAllocation(true);
             }
         }
 

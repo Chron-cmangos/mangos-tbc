@@ -641,9 +641,10 @@ void Unit::TriggerHomeEvents()
             me->GetCreatureGroup()->TriggerLinkingEvent(CREATURE_GROUP_EVENT_HOME, this);
         if (me->IsPet())
         {
-            Unit* owner = me->GetOwner();
-            if (!owner->IsAlive() && static_cast<Pet*>(this)->IsGuardian())
-                static_cast<Pet*>(this)->Unsummon(PET_SAVE_REAGENTS);
+            Pet* pet = static_cast<Pet*>(this);
+            Unit* owner = pet->GetOwner();
+            if (pet->IsGuardian() && (!owner || !owner->IsAlive()))
+                pet->Unsummon(PET_SAVE_REAGENTS);
         }
     }
 }
@@ -1577,7 +1578,7 @@ SpellCastResult Unit::CastSpell(Unit* Victim, uint32 spellId, uint32 triggeredFl
         if (triggeredByAura)
             sLog.outError("CastSpell: unknown spell id %i by caster: %s triggered by aura %u (eff %u)", spellId, GetGuidStr().c_str(), triggeredByAura->GetId(), triggeredByAura->GetEffIndex());
         else
-            sLog.outError("CastSpell: unknown spell id %i by caster: %s", spellId, GetGuidStr().c_str());
+            sLog.outError("CastSpell: unknown spell id %i by caster: %s item=%u parent_spell=%u flags=%u", spellId, GetGuidStr().c_str(), castItem ? castItem->GetEntry() : 0, triggeredBy ? triggeredBy->Id : 0, triggeredFlags);
         return SPELL_NOT_FOUND;
     }
 
@@ -1823,7 +1824,7 @@ SpellCastResult Unit::CastSpell(SpellCastArgs& args, uint32 spellId, uint32 trig
         if (triggeredByAura)
             sLog.outError("CastSpell: unknown spell id %i by caster: %s triggered by aura %u (eff %u)", spellId, GetGuidStr().c_str(), triggeredByAura->GetId(), triggeredByAura->GetEffIndex());
         else
-            sLog.outError("CastSpell: unknown spell id %i by caster: %s", spellId, GetGuidStr().c_str());
+            sLog.outError("CastSpell: unknown spell id %i by caster: %s item=%u parent_spell=%u flags=%u", spellId, GetGuidStr().c_str(), castItem ? castItem->GetEntry() : 0, triggeredBy ? triggeredBy->Id : 0, triggeredFlags);
         return SPELL_NOT_FOUND;
     }
 
@@ -6276,8 +6277,9 @@ void Unit::RemoveGameObject(uint32 spellid, bool del)
 
 void Unit::RemoveAllGameObjects()
 {
-    // wild summoned GOs - only remove references, do not remove GOs
-    m_gameObj.clear();
+    // Owned objects must lose their owner before the unit leaves the map.
+    // Wild summons have independent lifetimes and only lose tracking here.
+    RemoveGameObject(uint32(0), true);
     m_wildGameObjs.clear();
 }
 
@@ -12478,7 +12480,7 @@ void Unit::UpdateAllowedPositionZ(float x, float y, float& z, Map* atMap /*=null
     if (!CanFly())
     {
         bool canSwim = CanSwim();
-        float groundZ = GetMap()->GetHeight(x, y, z, canSwim), maxZ;
+        float groundZ = atMap->GetHeight(x, y, z, canSwim), maxZ;
         if (canSwim)
             maxZ = atMap->GetTerrain()->GetWaterOrGroundLevel(x, y, z, groundZ, !HasAuraType(SPELL_AURA_WATER_WALK), GetCollisionHeight());
         else

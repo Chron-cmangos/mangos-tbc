@@ -1155,6 +1155,12 @@ bool Object::PrintEntryError(char const* descr) const
 
 void Object::BuildUpdateDataForPlayer(Player* pl, UpdateDataMapType& update_players) const
 {
+#ifdef ENABLE_PLAYERBOTS
+    // Playerbots read live object fields; no bot handler consumes value-update packets.
+    // Keep camera/visibility bookkeeping in the caller and all gameplay packets intact.
+    if (pl->GetSession() && !pl->GetSession()->HasClientSocket())
+        return;
+#endif
     UpdateDataMapType::iterator iter = update_players.find(pl);
 
     if (iter == update_players.end())

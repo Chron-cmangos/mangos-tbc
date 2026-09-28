@@ -105,7 +105,7 @@ void SqlDelayThread::ProcessRequests()
         {
             const uint32 elapsed = WorldTimer::getMSTimeDiff(start, WorldTimer::getMSTime());
             if (elapsed >= slowThreshold)
-                sLog.outPerformance("SLOW_ASYNC_DB elapsed=%u ms remaining_queue=%u", elapsed, static_cast<uint32>(PendingCount()));
+                sLog.outPerformance("SLOW_ASYNC_DB elapsed=%u ms remaining_queue=%u kind=%s worker=%p", elapsed, static_cast<uint32>(PendingCount()), operation->DiagnosticKind(), static_cast<void*>(this));
         }
     }
 }

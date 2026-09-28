@@ -39,6 +39,7 @@ class SqlOperation
     public:
         virtual void OnRemove() { delete this; }
         virtual bool Execute(SqlConnection* conn) = 0;
+        virtual const char* DiagnosticKind() const { return "operation"; }
         virtual ~SqlOperation() {}
 };
 
@@ -52,6 +53,7 @@ class SqlPlainRequest : public SqlOperation
         SqlPlainRequest(const char* sql) : m_sql(mangos_strdup(sql)) {}
         ~SqlPlainRequest() { char* tofree = const_cast<char*>(m_sql); delete[] tofree; }
         bool Execute(SqlConnection* conn) override;
+        const char* DiagnosticKind() const override { return "statement"; }
 };
 
 class SqlTransaction : public SqlOperation
@@ -66,6 +68,7 @@ class SqlTransaction : public SqlOperation
         void DelayExecute(SqlOperation* sql) { m_queue.push_back(sql); }
 
         bool Execute(SqlConnection* conn) override;
+        const char* DiagnosticKind() const override { return "transaction"; }
 };
 
 class SqlPreparedRequest : public SqlOperation
@@ -75,6 +78,7 @@ class SqlPreparedRequest : public SqlOperation
         ~SqlPreparedRequest();
 
         bool Execute(SqlConnection* conn) override;
+        const char* DiagnosticKind() const override { return "prepared"; }
 
     private:
         const int m_nIndex;
@@ -117,6 +121,7 @@ class SqlQuery : public SqlOperation
         }
 
         bool Execute(SqlConnection* conn) override;
+        const char* DiagnosticKind() const override { return "query"; }
 };
 
 class SqlQueryHolder
@@ -147,5 +152,6 @@ class SqlQueryHolderEx : public SqlOperation
         SqlQueryHolderEx(SqlQueryHolder* holder, MaNGOS::IQueryCallback* callback, SqlResultQueue* queue, bool highPriority = false)
             : m_holder(holder), m_callback(callback), m_queue(queue), m_highPriority(highPriority) {}
         bool Execute(SqlConnection* conn) override;
+        const char* DiagnosticKind() const override { return "query_holder"; }
 };
 #endif                                                      //__SQLOPERATIONS_H

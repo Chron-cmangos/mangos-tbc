@@ -18,8 +18,9 @@
 
 #include "MapUpdater.h"
 #include "MapWorkers.h"
+#include <algorithm>
 
-MapUpdater::MapUpdater(size_t num_threads) : _cancelationToken(false), pending_requests(0)
+MapUpdater::MapUpdater(size_t num_threads) : _cancelationToken(false), pending_requests(0), peak_pending_requests(0)
 {
     for (size_t i = 0; i < num_threads; ++i)
         _workerThreads.push_back(std::thread(&MapUpdater::WorkerThread, this));
@@ -76,7 +77,27 @@ void MapUpdater::schedule_update(Worker* worker)
     std::lock_guard<std::mutex> lock(_lock);
 
     ++pending_requests;
+    peak_pending_requests = std::max(peak_pending_requests, pending_requests);
     _queue.Push(std::move(worker));
+}
+
+size_t MapUpdater::GetPendingRequests()
+{
+    std::lock_guard<std::mutex> lock(_lock);
+    return pending_requests;
+}
+
+size_t MapUpdater::GetQueuedRequests()
+{
+    return _queue.Size();
+}
+
+size_t MapUpdater::ConsumePeakPendingRequests()
+{
+    std::lock_guard<std::mutex> lock(_lock);
+    size_t const peak = peak_pending_requests;
+    peak_pending_requests = pending_requests;
+    return peak;
 }
 
 void MapUpdater::WorkerThread()
