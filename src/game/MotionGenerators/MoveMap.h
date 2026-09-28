@@ -44,7 +44,8 @@ inline void dtCustomFree(void* ptr)
 namespace MMAP
 {
     typedef std::unordered_map<uint32, dtTileRef> MMapTileSet;
-    typedef std::unordered_map<uint32, dtNavMeshQuery*> NavMeshQuerySet;
+    typedef std::unordered_map<std::thread::id, dtNavMeshQuery*> NavMeshThreadQuerySet;
+    typedef std::unordered_map<uint32, NavMeshThreadQuerySet> NavMeshQuerySet;
     typedef std::unordered_map<std::thread::id, dtNavMeshQuery*> NavMeshGOQuerySet;
 
     // dummy struct to hold map's mmap data
@@ -53,8 +54,9 @@ namespace MMAP
         MMapData(dtNavMesh* mesh) : navMesh(mesh), fullLoaded(false) {}
         ~MMapData()
         {
-            for (auto& navMeshQuerie : navMeshQueries)
-                dtFreeNavMeshQuery(navMeshQuerie.second);
+            for (auto& instanceQueries : navMeshQueries)
+                for (auto& threadQuery : instanceQueries.second)
+                    dtFreeNavMeshQuery(threadQuery.second);
 
             if (navMesh)
                 dtFreeNavMesh(navMesh);
@@ -62,8 +64,10 @@ namespace MMAP
 
         dtNavMesh* navMesh;
 
-        // we have to use single dtNavMeshQuery for every instance, since those are not thread safe
-        NavMeshQuerySet navMeshQueries;     // instanceId to query
+        // dtNavMeshQuery owns mutable search state and cannot be shared by map/bot workers.
+        // Keep a separate query for every instance/thread pair while sharing the read-only mesh.
+        NavMeshQuerySet navMeshQueries;     // instanceId to thread/query map
+        std::mutex navMeshQueriesMutex;
         MMapTileSet mmapLoadedTiles;        // maps [map grid coords] to [dtTile]
 
         bool fullLoaded;
@@ -107,7 +111,7 @@ namespace MMAP
             bool unloadMapInstance(uint32 mapId, uint32 instanceId);
             bool IsMMapIsLoaded(uint32 mapId, uint32 x, uint32 y) const;
 
-            // the returned [dtNavMeshQuery const*] is NOT threadsafe
+            // The returned query belongs exclusively to the calling thread.
             dtNavMeshQuery const* GetNavMeshQuery(uint32 mapId, uint32 instanceId);
             dtNavMeshQuery const* GetModelNavMeshQuery(uint32 displayId);
             dtNavMesh const* GetNavMesh(uint32 mapId);

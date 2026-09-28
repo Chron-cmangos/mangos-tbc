@@ -22382,7 +22382,7 @@ void Player::AddCooldown(SpellEntry const& spellEntry, ItemPrototype const* item
         auto& cdData = cdDataItr->second;
         if (!cdData->IsPermanent() && (!cdData->IsSpellCDExpired(GetMap()->GetCurrentClockTime()) || !cdData->IsCatCDExpired(GetMap()->GetCurrentClockTime())))
         {
-            sLog.outError("Player::AddCooldown> Spell(%u) try to add and already existing cooldown %u?", spellEntry.Id, forcedDuration);
+            DEBUG_LOG("Player::AddCooldown> Spell(%u) already has an active cooldown %u", spellEntry.Id, forcedDuration);
             return;
         }
         wasPermanent = cdData->IsPermanent();

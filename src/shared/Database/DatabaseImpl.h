@@ -49,13 +49,13 @@
 
 template <typename Callable>
 bool
-Database::AsyncQuery(Callable callback, const char* sql)
+Database::AsyncQuery(Callable callback, const char* sql, bool highPriority)
 {
     if (!sql || !m_pResultQueue)
     {
         return false;
     }
-    return m_threadBody->Delay(new SqlQuery(sql, new MaNGOS::QueryCallback(std::move(callback)), m_pResultQueue));
+    return m_threadBody->Delay(new SqlQuery(sql, new MaNGOS::QueryCallback(std::move(callback)), m_pResultQueue, highPriority), highPriority);
 }
 
 // -- PQuery / member --
@@ -76,6 +76,15 @@ Database::AsyncPQuery(Class* object, void (Class::*method)(QueryResult*, ParamTy
     ASYNC_PQUERY_BODY(format, szQuery)
     auto callback = std::bind(method, object, std::placeholders::_1, param1);
     return AsyncQuery(std::move(callback), szQuery);
+}
+
+template<class Class, typename ParamType1>
+bool
+Database::AsyncPQueryPriority(Class* object, void (Class::*method)(QueryResult*, ParamType1), ParamType1 param1, const char* format, ...)
+{
+    ASYNC_PQUERY_BODY(format, szQuery)
+    auto callback = std::bind(method, object, std::placeholders::_1, param1);
+    return AsyncQuery(std::move(callback), szQuery, true);
 }
 
 template<class Class, typename ParamType1, typename ParamType2>
@@ -134,6 +143,15 @@ Database::DelayQueryHolder(Class* object, void (Class::*method)(QueryResult*, Sq
     ASYNC_DELAYHOLDER_BODY(holder)
     auto callback = std::bind(method, object, std::placeholders::_1, holder);
     return holder->Execute(new MaNGOS::QueryCallback(std::move(callback)), m_threadBody, m_pResultQueue);
+}
+
+template<class Class>
+bool
+Database::DelayQueryHolderPriority(Class* object, void (Class::*method)(QueryResult*, SqlQueryHolder*), SqlQueryHolder* holder)
+{
+    ASYNC_DELAYHOLDER_BODY(holder)
+    auto callback = std::bind(method, object, std::placeholders::_1, holder);
+    return holder->Execute(new MaNGOS::QueryCallback(std::move(callback)), m_threadBody, m_pResultQueue, true);
 }
 
 template<class Class, typename ParamType1>

@@ -1957,6 +1957,10 @@ SpellAuraProcResult Unit::HandleProcTriggerSpellAuraProc(ProcExecutionData& data
     // Get triggered aura spell info
     SpellEntry const* auraSpellInfo = triggeredByAura->GetSpellProto();
 
+    // Holy Energy from Vial of the Sunwell must not feed its own charge aura.
+    if (auraSpellInfo->Id == 45059 && spellInfo && spellInfo->Id == 45062)
+        return SPELL_AURA_PROC_FAILED;
+
     // Basepoints of trigger aura
     int32 triggerAmount = triggeredByAura->GetModifier()->m_amount;
 
