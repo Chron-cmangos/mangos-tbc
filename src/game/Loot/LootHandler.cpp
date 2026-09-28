@@ -275,7 +275,7 @@ void WorldSession::HandleLootMethodOpcode(WorldPacket& recv_data)
         return;
     /********************/
 
-    if (lootMethod > MASTER_LOOT)
+    if (lootMethod > NEED_BEFORE_GREED)
         return;
 
     if (lootMethod == MASTER_LOOT)

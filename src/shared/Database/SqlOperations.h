@@ -91,12 +91,14 @@ class SqlQueryHolderEx;                                     /// points to a hold
 class SqlResultQueue
 {
     private:
-        std::mutex m_mutex;
+        mutable std::mutex m_mutex;
+        std::queue<std::unique_ptr<MaNGOS::IQueryCallback>> m_priorityQueue;
         std::queue<std::unique_ptr<MaNGOS::IQueryCallback>> m_queue;
 
     public:
-        void Update();
-        void Add(MaNGOS::IQueryCallback*);
+        void Update(uint32 maxMilliseconds = 0);
+        void Add(MaNGOS::IQueryCallback*, bool highPriority = false);
+        size_t PendingCount() const;
 };
 
 class SqlQuery : public SqlOperation
@@ -105,10 +107,11 @@ class SqlQuery : public SqlOperation
         std::vector<char> m_sql;
         MaNGOS::IQueryCallback* const m_callback;
         SqlResultQueue* const m_queue;
+        bool const m_highPriority;
 
     public:
-        SqlQuery(const char* sql, MaNGOS::IQueryCallback* callback, SqlResultQueue* queue)
-            : m_sql(strlen(sql) + 1), m_callback(callback), m_queue(queue)
+        SqlQuery(const char* sql, MaNGOS::IQueryCallback* callback, SqlResultQueue* queue, bool highPriority = false)
+            : m_sql(strlen(sql) + 1), m_callback(callback), m_queue(queue), m_highPriority(highPriority)
         {
             memcpy(&m_sql[0], sql, m_sql.size());
         }
@@ -130,7 +133,7 @@ class SqlQueryHolder
         void SetSize(size_t size);
         std::unique_ptr<QueryResult> GetResult(size_t index);
         void SetResult(size_t index, std::unique_ptr<QueryResult> queryResult);
-        bool Execute(MaNGOS::IQueryCallback* callback, SqlDelayThread* thread, SqlResultQueue* queue);
+        bool Execute(MaNGOS::IQueryCallback* callback, SqlDelayThread* thread, SqlResultQueue* queue, bool highPriority = false);
 };
 
 class SqlQueryHolderEx : public SqlOperation
@@ -139,9 +142,10 @@ class SqlQueryHolderEx : public SqlOperation
         SqlQueryHolder* m_holder;
         MaNGOS::IQueryCallback* m_callback;
         SqlResultQueue* m_queue;
+        bool m_highPriority;
     public:
-        SqlQueryHolderEx(SqlQueryHolder* holder, MaNGOS::IQueryCallback* callback, SqlResultQueue* queue)
-            : m_holder(holder), m_callback(callback), m_queue(queue) {}
+        SqlQueryHolderEx(SqlQueryHolder* holder, MaNGOS::IQueryCallback* callback, SqlResultQueue* queue, bool highPriority = false)
+            : m_holder(holder), m_callback(callback), m_queue(queue), m_highPriority(highPriority) {}
         bool Execute(SqlConnection* conn) override;
 };
 #endif                                                      //__SQLOPERATIONS_H

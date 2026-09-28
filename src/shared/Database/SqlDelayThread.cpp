@@ -75,29 +75,37 @@ void SqlDelayThread::Stop()
 
 void SqlDelayThread::ProcessRequests()
 {
-    std::queue<std::unique_ptr<SqlOperation>> sqlQueue;
-
-    // we need to move the contents of the queue to a local copy because executing these statements with the
-    // lock in place can result in a deadlock with the world thread which calls Database::ProcessResultQueue()
-    {
-        std::lock_guard<std::mutex> guard(m_queueMutex);
-        sqlQueue = std::move(m_sqlQueue);
-    }
-
     const bool performanceLogging = sConfig.GetBoolDefault("PerformanceLog.Enabled", true);
     const uint32 slowThreshold = static_cast<uint32>(std::max(1, sConfig.GetIntDefault("PerformanceLog.SlowAsyncDbMs", 100)));
 
-    while (!sqlQueue.empty())
+    for (;;)
     {
-        auto const s = std::move(sqlQueue.front());
-        sqlQueue.pop();
+        std::unique_ptr<SqlOperation> operation;
+        {
+            // Pop one request at a time so a newly arrived real-player request can
+            // preempt the bot backlog without executing SQL while holding the lock.
+            std::lock_guard<std::mutex> guard(m_queueMutex);
+            if (!m_prioritySqlQueue.empty())
+            {
+                operation = std::move(m_prioritySqlQueue.front());
+                m_prioritySqlQueue.pop();
+            }
+            else if (!m_sqlQueue.empty())
+            {
+                operation = std::move(m_sqlQueue.front());
+                m_sqlQueue.pop();
+            }
+            else
+                break;
+        }
+
         const uint32 start = performanceLogging ? WorldTimer::getMSTime() : 0;
-        s->Execute(m_dbConnection);
+        operation->Execute(m_dbConnection);
         if (performanceLogging)
         {
             const uint32 elapsed = WorldTimer::getMSTimeDiff(start, WorldTimer::getMSTime());
             if (elapsed >= slowThreshold)
-                sLog.outPerformance("SLOW_ASYNC_DB elapsed=%u ms remaining_queue=%u", elapsed, static_cast<uint32>(sqlQueue.size()));
+                sLog.outPerformance("SLOW_ASYNC_DB elapsed=%u ms remaining_queue=%u", elapsed, static_cast<uint32>(PendingCount()));
         }
     }
 }

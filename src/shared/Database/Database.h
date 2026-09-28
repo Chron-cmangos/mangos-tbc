@@ -149,13 +149,15 @@ class Database
          * object and bind any other required arguments for the actual callback.
          */
         template <typename Callable>
-        bool AsyncQuery(Callable callback, const char* sql);
+        bool AsyncQuery(Callable callback, const char* sql, bool highPriority = false);
 
         // PQuery / member
         template<class Class>
         bool AsyncPQuery(Class* object, void (Class::*method)(QueryResult*), const char* format, ...) ATTR_PRINTF(4, 5);
         template<class Class, typename ParamType1>
         bool AsyncPQuery(Class* object, void (Class::*method)(QueryResult*, ParamType1), ParamType1 param1, const char* format, ...) ATTR_PRINTF(5, 6);
+        template<class Class, typename ParamType1>
+        bool AsyncPQueryPriority(Class* object, void (Class::*method)(QueryResult*, ParamType1), ParamType1 param1, const char* format, ...) ATTR_PRINTF(5, 6);
         template<class Class, typename ParamType1, typename ParamType2>
         bool AsyncPQuery(Class* object, void (Class::*method)(QueryResult*, ParamType1, ParamType2), ParamType1 param1, ParamType2 param2, const char* format, ...) ATTR_PRINTF(6, 7);
         template<class Class, typename ParamType1, typename ParamType2, typename ParamType3>
@@ -170,6 +172,8 @@ class Database
         template<class Class>
         // QueryHolder
         bool DelayQueryHolder(Class* object, void (Class::*method)(QueryResult*, SqlQueryHolder*), SqlQueryHolder* holder);
+        template<class Class>
+        bool DelayQueryHolderPriority(Class* object, void (Class::*method)(QueryResult*, SqlQueryHolder*), SqlQueryHolder* holder);
         template<class Class, typename ParamType1>
         bool DelayQueryHolder(Class* object, void (Class::*method)(QueryResult*, SqlQueryHolder*, ParamType1), SqlQueryHolder* holder, ParamType1 param1);
 

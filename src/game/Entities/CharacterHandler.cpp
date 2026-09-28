@@ -318,7 +318,7 @@ void WorldSession::HandleCharEnum(QueryResult* result)
 void WorldSession::HandleCharEnumOpcode(WorldPacket& /*recv_data*/)
 {
     /// get all the data necessary for loading all characters (along with their pets) on the account
-    CharacterDatabase.AsyncPQuery(&chrHandler, &CharacterHandler::HandleCharEnumCallback, GetAccountId(),
+    CharacterDatabase.AsyncPQueryPriority(&chrHandler, &CharacterHandler::HandleCharEnumCallback, GetAccountId(),
                                   !sWorld.getConfig(CONFIG_BOOL_DECLINED_NAMES_USED) ?
                                   //   ------- Query Without Declined Names --------
                                   //           0               1                2                3                 4                  5                       6                        7
@@ -702,7 +702,7 @@ void WorldSession::HandlePlayerLoginOpcode(WorldPacket& recv_data)
         return;
     }
 
-    CharacterDatabase.DelayQueryHolder(&chrHandler, &CharacterHandler::HandlePlayerLoginCallback, holder);
+    CharacterDatabase.DelayQueryHolderPriority(&chrHandler, &CharacterHandler::HandlePlayerLoginCallback, holder);
 }
 
 #ifdef BUILD_DEPRECATED_PLAYERBOT
