@@ -29,6 +29,13 @@
 
 INSTANTIATE_SINGLETON_1(PoolManager);
 
+bool PoolTemplateData::CanBeSpawnedAtMap(MapEntry const* entry, uint32 mapInstanceId) const
+{
+    // Dungeon copies each own their pool state. Only world-map partitions
+    // must match the partition recorded for a static spawn.
+    return mapEntry && mapEntry == entry && (entry->Instanceable() || instanceId == mapInstanceId);
+}
+
 ////////////////////////////////////////////////////////////
 // template class SpawnedPoolData
 
@@ -307,7 +314,7 @@ void PoolGroup<Creature>::Despawn1Object(MapPersistentState& mapState, uint32 gu
 {
     if (CreatureData const* data = sObjectMgr.GetCreatureData(guid))
     {
-        if (mapState.GetMapId() != data->mapid || mapState.GetInstanceId() != sMapMgr.GetContinentInstanceId(data->mapid, data->posX, data->posY))
+        if (mapState.GetMapId() != data->mapid || (!mapState.GetMapEntry()->Instanceable() && mapState.GetInstanceId() != sMapMgr.GetContinentInstanceId(data->mapid, data->posX, data->posY)))
             return;
 
         mapState.RemoveCreatureFromGrid(guid, data);
@@ -323,7 +330,7 @@ void PoolGroup<GameObject>::Despawn1Object(MapPersistentState& mapState, uint32 
 {
     if (GameObjectData const* data = sObjectMgr.GetGOData(guid))
     {
-        if (mapState.GetMapId() != data->mapid || mapState.GetInstanceId() != sMapMgr.GetContinentInstanceId(data->mapid, data->posX, data->posY))
+        if (mapState.GetMapId() != data->mapid || (!mapState.GetMapEntry()->Instanceable() && mapState.GetInstanceId() != sMapMgr.GetContinentInstanceId(data->mapid, data->posX, data->posY)))
             return;
 
         mapState.RemoveGameobjectFromGrid(guid, data);
@@ -528,7 +535,7 @@ void PoolGroup<Creature>::ReSpawn1Object(MapPersistentState& mapState, PoolObjec
 {
     if (CreatureData const* data = sObjectMgr.GetCreatureData(obj->guid))
     {
-        if (mapState.GetMapId() != data->mapid || mapState.GetInstanceId() != sMapMgr.GetContinentInstanceId(data->mapid, data->posX, data->posY))
+        if (mapState.GetMapId() != data->mapid || (!mapState.GetMapEntry()->Instanceable() && mapState.GetInstanceId() != sMapMgr.GetContinentInstanceId(data->mapid, data->posX, data->posY)))
             return;
 
         if (Map* dataMap = mapState.GetMap())
@@ -543,7 +550,7 @@ void PoolGroup<GameObject>::ReSpawn1Object(MapPersistentState& mapState, PoolObj
 {
     if (GameObjectData const* data = sObjectMgr.GetGOData(obj->guid))
     {
-        if (mapState.GetMapId() != data->mapid || mapState.GetInstanceId() != sMapMgr.GetContinentInstanceId(data->mapid, data->posX, data->posY))
+        if (mapState.GetMapId() != data->mapid || (!mapState.GetMapEntry()->Instanceable() && mapState.GetInstanceId() != sMapMgr.GetContinentInstanceId(data->mapid, data->posX, data->posY)))
             return;
 
         if (Map* dataMap = mapState.GetMap())

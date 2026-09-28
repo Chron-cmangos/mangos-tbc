@@ -13,6 +13,30 @@ target_compile_options(cmangos-compile-option-interface
     /EHsc)
 message(STATUS "MSVC: Enabled increased number of sections in object files")
 
+# CMake 4.x no longer supplies the historical MSVC configuration flags for
+# this project, leaving Release/RelWithDebInfo unoptimized and without symbols.
+# Keep the performance build fast while retaining a matching PDB for crash dumps.
+target_compile_options(cmangos-compile-option-interface
+  INTERFACE
+    $<$<CONFIG:Debug>:/Od>
+    $<$<CONFIG:Debug>:/Zi>
+    $<$<CONFIG:Debug>:/FS>
+    $<$<CONFIG:Release>:/O2>
+    $<$<CONFIG:Release>:/Ob2>
+    $<$<CONFIG:RelWithDebInfo>:/O2>
+    $<$<CONFIG:RelWithDebInfo>:/Ob2>
+    $<$<CONFIG:RelWithDebInfo>:/Zi>
+    $<$<CONFIG:RelWithDebInfo>:/FS>
+    $<$<CONFIG:MinSizeRel>:/O1>
+    $<$<CONFIG:MinSizeRel>:/Ob1>)
+
+target_link_options(cmangos-compile-option-interface
+  INTERFACE
+    $<$<CONFIG:Debug>:/DEBUG:FULL>
+    $<$<CONFIG:RelWithDebInfo>:/DEBUG:FULL>
+    $<$<CONFIG:RelWithDebInfo>:/OPT:REF>
+    $<$<CONFIG:RelWithDebInfo>:/OPT:ICF>)
+
 # multithreaded compiling on VS
 target_compile_options(cmangos-compile-option-interface
   INTERFACE
