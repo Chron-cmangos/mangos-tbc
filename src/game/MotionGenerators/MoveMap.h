@@ -97,7 +97,8 @@ namespace MMAP
     class MMapManager
     {
         public:
-            MMapManager() : loadedTiles(0), m_enabled(true) {}
+            MMapManager() : loadedTiles(0), m_mapThreadQueries(0), m_modelThreadQueries(0),
+                m_queryAllocations(0), m_queryFrees(0), m_queryHighWater(0), m_enabled(true) {}
             ~MMapManager();
 
             void loadAllMapTiles(std::string const& basePath, uint32 mapId);
@@ -119,15 +120,28 @@ namespace MMAP
 
             uint32 getLoadedTilesCount() const { return loadedTiles; }
             uint32 getLoadedMapsCount() const { return loadedMMaps.size(); }
+            uint32 getLoadedModelsCount() const { return static_cast<uint32>(m_loadedModels.size()); }
+            uint64 getMapThreadQueryCount() const { return m_mapThreadQueries.load(std::memory_order_relaxed); }
+            uint64 getModelThreadQueryCount() const { return m_modelThreadQueries.load(std::memory_order_relaxed); }
+            uint64 getQueryAllocationCount() const { return m_queryAllocations.load(std::memory_order_relaxed); }
+            uint64 getQueryFreeCount() const { return m_queryFrees.load(std::memory_order_relaxed); }
+            uint64 getQueryHighWater() const { return m_queryHighWater.load(std::memory_order_relaxed); }
 
             void SetEnabled(bool state) { m_enabled = state; }
             bool IsEnabled() const { return m_enabled; }
         private:
             bool loadMapData(std::string const& basePath, uint32 mapId);
             uint32 packTileID(int32 x, int32 y) const;
+            void RecordQueryAllocation(bool model);
+            void RecordQueryFree(bool model, uint64 count);
 
             std::unordered_map<uint32, std::unique_ptr<MMapData>> loadedMMaps;
             std::atomic<uint32> loadedTiles;
+            std::atomic<uint64> m_mapThreadQueries;
+            std::atomic<uint64> m_modelThreadQueries;
+            std::atomic<uint64> m_queryAllocations;
+            std::atomic<uint64> m_queryFrees;
+            std::atomic<uint64> m_queryHighWater;
 
             std::unordered_map<uint32, std::unique_ptr<MMapGOData>> m_loadedModels;
             std::mutex m_modelsMutex;

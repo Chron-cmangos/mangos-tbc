@@ -62,6 +62,22 @@ void MapManager::Initialize()
         m_objectUpdater.activate(objectThreads);
         sLog.outString(">> Parallel in-map object/visibility workers: %d", objectThreads);
     }
+
+#ifdef ENABLE_PLAYERBOTS
+    int const idleBotThreads = sWorld.getConfig(CONFIG_UINT32_MAP_IDLE_BOT_THREADS);
+    if (idleBotThreads > 0)
+    {
+        m_idleBotUpdater.activate(idleBotThreads);
+        sLog.outString(">> Parallel idle Playerbot AI workers: %d", idleBotThreads);
+    }
+#endif
+
+    int const cellThreads = sWorld.getConfig(CONFIG_UINT32_MAP_CELL_THREADS);
+    if (cellThreads > 0)
+    {
+        m_cellUpdater.activate(cellThreads);
+        sLog.outString(">> Parallel active-cell discovery workers: %d", cellThreads);
+    }
 }
 
 void MapManager::InitStateMachine()
@@ -587,6 +603,10 @@ void MapManager::UnloadAll()
         m_updater.deactivate();
     if (m_objectUpdater.activated())
         m_objectUpdater.deactivate();
+    if (m_idleBotUpdater.activated())
+        m_idleBotUpdater.deactivate();
+    if (m_cellUpdater.activated())
+        m_cellUpdater.deactivate();
 
     TerrainManager::Instance().UnloadAll();
 }
