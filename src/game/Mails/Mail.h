@@ -247,6 +247,8 @@ class MailDraft
          * @param COD the amount to which the cod should be set.
          */
         MailDraft& SetCOD(uint32 COD) { m_COD = COD; return *this; }
+        // Delete the original and create its return in the same DB transaction.
+        MailDraft& SetReturnSourceMailId(uint32 id) { m_returnSourceMailId = id; return *this; }
 
         void CloneFrom(MailDraft const& draft);
     public:                                                 // finishers
@@ -274,6 +276,7 @@ class MailDraft
         uint32 m_money;
         /// The cod amount of this MailDraft.
         uint32 m_COD;
+        uint32 m_returnSourceMailId = 0;
 };
 /**
  * Structure holding information about an item in the mail.

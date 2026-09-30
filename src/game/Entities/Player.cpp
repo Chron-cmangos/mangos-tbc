@@ -1560,8 +1560,7 @@ void Player::Update(const uint32 diff)
             m_positionStatusUpdateTimer -= diff;
     }
 
-    // === FIX: Guard the automated background zone tick ===
-    if (m_zoneUpdateTimer > 0 && IsInWorld())
+    if (m_zoneUpdateTimer > 0)
     {
         if (diff >= m_zoneUpdateTimer)
         {
@@ -1647,9 +1646,8 @@ void Player::Update(const uint32 diff)
     else
         m_createdInstanceClearTimer -= diff;
 
-    // === FIX: Use IsInWorld() to avoid hitting the GetMap assertion macro ===
     Pet* pet = GetPet();
-    if (pet && IsInWorld() && !pet->IsWithinDistInMap(this, GetMap()->GetVisibilityDistance()) && (GetCharmGuid() && (pet->GetObjectGuid() != GetCharmGuid())))
+    if (pet && !pet->IsWithinDistInMap(this, GetMap()->GetVisibilityDistance()) && (GetCharmGuid() && (pet->GetObjectGuid() != GetCharmGuid())))
         pet->Unsummon(PET_SAVE_REAGENTS, this);
 
     if (IsHasDelayedTeleport() && !m_semaphoreTeleport_Near)
@@ -1661,10 +1659,6 @@ void Player::Update(const uint32 diff)
     else if (m_playerbotMgr)
         m_playerbotMgr->UpdateAI(diff);
 #endif
-
-    // === SAFETY RE-CHECK: Ensure Map context hasn't dropped before exit ===
-    if (!IsInWorld())
-        return;
 }
 
 void Player::Heartbeat()
@@ -6560,14 +6554,11 @@ bool Player::SetPosition(float x, float y, float z, float orientation, bool tele
         return true;
     m_positionStatusUpdateTimer = 100;
 
-    if (IsInWorld())
-    {
-        // code block for underwater state update
-        UpdateTerainEnvironmentFlags(m, x, y, z);
+    // code block for underwater state update
+    UpdateTerainEnvironmentFlags(m, x, y, z);
 
-        // code block for outdoor state and area-explore check
-        CheckAreaExploreAndOutdoor();
-    }
+    // code block for outdoor state and area-explore check
+    CheckAreaExploreAndOutdoor();
     return true;
 }
 
