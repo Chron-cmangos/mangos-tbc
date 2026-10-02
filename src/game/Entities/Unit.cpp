@@ -641,10 +641,9 @@ void Unit::TriggerHomeEvents()
             me->GetCreatureGroup()->TriggerLinkingEvent(CREATURE_GROUP_EVENT_HOME, this);
         if (me->IsPet())
         {
-            Pet* pet = static_cast<Pet*>(this);
-            Unit* owner = pet->GetOwner();
-            if (pet->IsGuardian() && (!owner || !owner->IsAlive()))
-                pet->Unsummon(PET_SAVE_REAGENTS);
+            Unit* owner = me->GetOwner();
+            if (!owner->IsAlive() && static_cast<Pet*>(this)->IsGuardian())
+                static_cast<Pet*>(this)->Unsummon(PET_SAVE_REAGENTS);
         }
     }
 }

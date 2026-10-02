@@ -27,39 +27,6 @@
 #include "Entities/UpdateData.h"
 #include "Platform/Define.h"
 
-#ifdef ENABLE_PLAYERBOTS
-#include "playerbot/PlayerbotAI.h"
-#endif
-
-class MapUpdateTaskGroup
-{
-    public:
-        void Add()
-        {
-            std::lock_guard<std::mutex> guard(m_lock);
-            ++m_pending;
-        }
-
-        void Done()
-        {
-            std::lock_guard<std::mutex> guard(m_lock);
-            MANGOS_ASSERT(m_pending > 0);
-            if (--m_pending == 0)
-                m_condition.notify_all();
-        }
-
-        void Wait()
-        {
-            std::unique_lock<std::mutex> lock(m_lock);
-            m_condition.wait(lock, [this]() { return m_pending == 0; });
-        }
-
-    private:
-        std::mutex m_lock;
-        std::condition_variable m_condition;
-        size_t m_pending = 0;
-};
-
 class Worker
 {
     public:
@@ -95,14 +62,14 @@ class MapUpdateWorker : public Worker
 class GridCrawler : public Worker
 {
     public:
-        GridCrawler(Map& map, std::vector<Cell>&& cells, WorldObjectUnSet& objects, uint32 diff,
-            MapUpdateTaskGroup& group, MapUpdater& updater) :
-            Worker(updater), m_map(map), m_cells(std::move(cells)), m_objects(objects), m_diff(diff), m_group(group)
+        GridCrawler(Map& map, std::vector<Cell> &cells, uint32 diff, MapUpdater& updater) :
+            Worker(updater), m_map(map), m_cells(cells), m_diff(diff)
         {}
 
         void execute() override
         {
-            MaNGOS::ObjectUpdater obj_updater(m_objects, m_diff);
+            WorldObjectUnSet objToUpdate;
+            MaNGOS::ObjectUpdater obj_updater(objToUpdate, m_diff);
             TypeContainerVisitor<MaNGOS::ObjectUpdater, GridTypeMapContainer  > grid_object_update(obj_updater);    // For creature
             TypeContainerVisitor<MaNGOS::ObjectUpdater, WorldTypeMapContainer > world_object_update(obj_updater);   // For pets
 
@@ -112,25 +79,21 @@ class GridCrawler : public Worker
                 m_map.Visit(cell, world_object_update);
             }
 
-            m_group.Done();
             GetWorker().update_finished();
         }
 
     private:
         Map& m_map;
-        std::vector<Cell> m_cells;
-        WorldObjectUnSet& m_objects;
+        std::vector<Cell> &m_cells;
         uint32 m_diff;
-        MapUpdateTaskGroup& m_group;
 };
 
 
 class ObjectUpdateBuildWorker : public Worker
 {
     public:
-        ObjectUpdateBuildWorker(std::vector<Object*>&& objects, UpdateDataMapType& updates,
-            MapUpdateTaskGroup& group, MapUpdater& updater) :
-            Worker(updater), m_objects(std::move(objects)), m_updates(updates), m_group(group)
+        ObjectUpdateBuildWorker(std::vector<Object*>&& objects, UpdateDataMapType& updates, MapUpdater& updater) :
+            Worker(updater), m_objects(std::move(objects)), m_updates(updates)
         {}
 
         void execute() override
@@ -138,9 +101,7 @@ class ObjectUpdateBuildWorker : public Worker
             for (Object* object : m_objects)
                 object->BuildUpdateData(m_updates);
 
-            m_group.Done();
             GetWorker().update_finished();
-            MapUpdateTaskGroup& m_group;
         }
 
     private:
@@ -148,48 +109,4 @@ class ObjectUpdateBuildWorker : public Worker
         UpdateDataMapType& m_updates;
 };
 
-#ifdef ENABLE_PLAYERBOTS
-class IdleBotAIUpdateWorker : public Worker
-{
-    public:
-        IdleBotAIUpdateWorker(IdleBotAIUpdateRequest const* updates, size_t count, uint32 jitterMs,
-            MapUpdateTaskGroup& group, MapUpdater& updater) :
-            Worker(updater), m_updates(updates), m_count(count), m_jitterMs(jitterMs), m_group(group)
-        {}
-
-        void execute() override
-        {
-            for (size_t i = 0; i < m_count; ++i)
-            {
-                auto const& update = m_updates[i];
-                Player* player = update.player;
-                PlayerbotAI* ai = player ? player->GetPlayerbotAI() : nullptr;
-                if (!ai || !ai->IsTransitionContextCurrent(update.transitionGeneration,
-                    update.mapId, update.instanceId))
-                {
-                    PlayerbotAI::RecordDiscardedTransitionWork();
-                    continue;
-                }
-
-                player->UpdateAI(update.elapsed, true, true);
-                if (ai->IsTransitionContextCurrent(update.transitionGeneration,
-                    update.mapId, update.instanceId))
-                {
-                    ai->ScheduleNextMinimalUpdate(player->GetGUIDLow(), m_jitterMs);
-                }
-                else
-                    PlayerbotAI::RecordDiscardedTransitionWork();
-            }
-
-            m_group.Done();
-            GetWorker().update_finished();
-        }
-
-    private:
-        IdleBotAIUpdateRequest const* m_updates;
-        size_t m_count;
-        uint32 m_jitterMs;
-        MapUpdateTaskGroup& m_group;
-};
-#endif
 #endif //_MAP_WORKERS_H_INCLUDED
