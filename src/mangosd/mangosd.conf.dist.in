@@ -422,6 +422,10 @@ MapUpdate.IdleBotMaxTimerAdvanceMs = 250
 MapUpdate.IdleBotJitterMs = 4000
 MapUpdate.CellThreads = 2
 MapUpdate.CellChunkSize = 64
+MapUpdate.CellMinParallelCells = 128
+MapUpdate.CellMaxChunksPerMap = 8
+MapUpdate.CellMaxWaitMs = 75
+MapUpdate.CellFallbackSeconds = 30
 Playerbot.IdleCoreUpdateSkip = 4
 Playerbot.StaggerBackgroundUpdates = 1
 PerformanceLog.Enabled = 1
@@ -434,12 +438,21 @@ PerformanceLog.SlowAsyncDbMs = 100
 PerformanceLog.SlowDbCallbackMs = 50
 PerformanceLog.SummaryIntervalMs = 60000
 PerformanceLog.DetailIntervalMs = 1000
+Diagnostics.RepeatedWarningIntervalMs = 300000
 AdaptiveLoad.Enabled = 1
 AdaptiveLoad.EmptyMapUpdateMs = 500
 AdaptiveLoad.SlowWorldMs = 250
 AdaptiveLoad.RecoverWorldMs = 120
 AdaptiveLoad.MinVisibilityPercent = 70
 AdaptiveLoad.VisibilityStepPercent = 5
+AdaptiveLoad.BotBudgetMs = 20
+AdaptiveLoad.BackgroundBotMinUpdates = 16
+AdaptiveLoad.BackgroundBotMaxDeferralMs = 15000
+AdaptiveLoad.BotRecoveryTicks = 20
+# Zero disables memory-pressure admission control. Dev may set these below host capacity.
+AdaptiveLoad.MemorySoftMB = 0
+AdaptiveLoad.MemoryHardMB = 0
+AdaptiveLoad.MemoryRecoverMB = 0
 MovementCompression.Enabled = 1
 MovementCompression.MinPackets = 3
 MovementBroadcast.Threads = 1
@@ -459,6 +472,7 @@ DynamicRespawn.PlayersMaxLevelDiff = 0
 DynamicRespawn.AllowElites = 0
 Continents.Instanciate = 0
 MaxCoreStuckTime = 0
+Watchdog.BreadcrumbFile = "StallBreadcrumb.log"
 AddonChannel = 1
 CleanCharacterDB = 1
 MaxWhoListReturns = 49
@@ -466,6 +480,12 @@ AccountData = 0
 
 ###################################################################################################################
 # SERVER LOGGING
+# Arch3 bounded append-only diagnostics. Rotation happens safely on startup;
+# archives older than the retention window are removed.
+LogRotation.Enabled = 1
+LogRotation.MaxFileSizeMB = 100
+LogRotation.Daily = 1
+LogRotation.RetentionDays = 14
 #
 #    LogSQL
 #        Enable logging of GM commands - all SQL code will be written to a log file

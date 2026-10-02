@@ -23,8 +23,10 @@
 #include "Entities/TemporarySpawn.h"
 #include "AI/BaseAI/UnitAI.h"
 #include "Entities/Player.h"
+#include "Util/Timer.h"
 
 #include <algorithm>
+#include <atomic>
 
 AbstractPathMovementGenerator::AbstractPathMovementGenerator(const Movement::PointsArray& path, std::optional<float> orientation, int32 offset /* = 0*/, bool cyclic /* = true*/) :
     m_pathIndex(offset), m_orientation(orientation), m_cyclic(cyclic), m_firstCycle(false), m_startPoint(0), m_speedChanged(false)
@@ -71,7 +73,23 @@ void AbstractPathMovementGenerator::Initialize(Unit& unit)
 
     if (m_path.empty())
     {
-        sLog.outError("AbstractPathMovementGenerator::Initialize Path empty for unit name %s entry %u dbguid %u.", unit.GetName(), unit.GetEntry(), unit.GetDbGuid());
+        static std::atomic<uint32> emptyPathCount{0};
+        static std::atomic<uint32> lastEmptyPathLog{0};
+        emptyPathCount.fetch_add(1, std::memory_order_relaxed);
+        uint32 const now = WorldTimer::getMSTime();
+        uint32 previous = lastEmptyPathLog.load(std::memory_order_relaxed);
+        if (!previous || WorldTimer::getMSTimeDiff(previous, now) >= 60000)
+        {
+            if (lastEmptyPathLog.compare_exchange_strong(previous, now, std::memory_order_relaxed))
+            {
+                uint32 const suppressed = emptyPathCount.exchange(0, std::memory_order_relaxed) - 1;
+                sLog.outError("AbstractPathMovementGenerator::Initialize empty path for unit name %s entry %u dbguid %u (suppressed=%u).",
+                    unit.GetName(), unit.GetEntry(), unit.GetDbGuid(), suppressed);
+            }
+        }
+        unit.clearUnitState(UNIT_STAT_ROAMING_MOVE);
+        unit.StopMoving(true);
+        m_spline.clear();
         return;
     }
 

@@ -23,6 +23,7 @@
 #include "Util/Util.h"
 #include "Util/ByteBuffer.h"
 #include "Util/ProgressBar.h"
+#include "Platform/Filesystem.h"
 
 #include <fstream>
 #include <iostream>
@@ -313,7 +314,53 @@ FILE* Log::openLogFile(char const* configFileName, char const* configTimeStampFl
             logfn += m_logsTimestamp;
     }
 
-    return fopen((m_logsDir + logfn).c_str(), mode);
+    const std::string fullPath = m_logsDir + logfn;
+    if (sConfig.GetBoolDefault("LogRotation.Enabled", true))
+    {
+        try
+        {
+            MaNGOS::Filesystem::path path(fullPath);
+            if (MaNGOS::Filesystem::exists(path) && MaNGOS::Filesystem::is_regular_file(path))
+            {
+                bool rotate = false;
+                const uint32 maxSizeMb = std::max<int32>(1, sConfig.GetIntDefault("LogRotation.MaxFileSizeMB", 100));
+                rotate = MaNGOS::Filesystem::file_size(path) >= static_cast<uintmax_t>(maxSizeMb) * 1024u * 1024u;
+                if (!rotate && sConfig.GetBoolDefault("LogRotation.Daily", true))
+                {
+                    const std::time_t modified = MaNGOS::Filesystem::last_write_time(path);
+                    const std::time_t now = std::time(nullptr);
+                    const std::tm modifiedLocal = *std::localtime(&modified);
+                    const std::tm nowLocal = *std::localtime(&now);
+                    rotate = modifiedLocal.tm_year != nowLocal.tm_year || modifiedLocal.tm_yday != nowLocal.tm_yday;
+                }
+                if (rotate)
+                    MaNGOS::Filesystem::rename(path, MaNGOS::Filesystem::path(fullPath + "." + GetTimestampStr() + ".archive"));
+            }
+
+            const int32 retentionDays = std::max<int32>(1, sConfig.GetIntDefault("LogRotation.RetentionDays", 14));
+            MaNGOS::Filesystem::path directory = path.parent_path().empty() ? MaNGOS::Filesystem::path(".") : path.parent_path();
+            const std::string prefix = path.filename().string() + ".";
+            const std::time_t cutoff = std::time(nullptr) - static_cast<std::time_t>(retentionDays) * 24 * 60 * 60;
+            if (MaNGOS::Filesystem::exists(directory))
+            {
+                for (MaNGOS::Filesystem::directory_iterator itr(directory), end; itr != end; ++itr)
+                {
+                    if (!MaNGOS::Filesystem::is_regular_file(itr->path()))
+                        continue;
+                    const std::string filename = itr->path().filename().string();
+                    if (filename.compare(0, prefix.size(), prefix) == 0 && filename.find(".archive") != std::string::npos &&
+                        MaNGOS::Filesystem::last_write_time(itr->path()) < cutoff)
+                        MaNGOS::Filesystem::remove(itr->path());
+                }
+            }
+        }
+        catch (std::exception const& error)
+        {
+            std::fprintf(stderr, "Log rotation failed for %s: %s\n", fullPath.c_str(), error.what());
+        }
+    }
+
+    return fopen(fullPath.c_str(), mode);
 }
 
 FILE* Log::openGmlogPerAccount(uint32 account)

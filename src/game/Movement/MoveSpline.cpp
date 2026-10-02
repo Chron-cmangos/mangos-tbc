@@ -21,6 +21,8 @@
 #include "Log/Log.h"
 #include "Entities/Unit.h"
 
+#include <cmath>
+
 namespace Movement
 {
     extern float computeFallTime(float path_length, bool isSafeFall);
@@ -175,6 +177,9 @@ namespace Movement
     }
         CHECK(path.size() > 1);
         CHECK(velocity > 0.f);
+        CHECK(std::isfinite(velocity));
+        for (Vector3 const& point : path)
+            CHECK(std::isfinite(point.x) && std::isfinite(point.y) && std::isfinite(point.z));
         // CHECK(_checkPathBounds());
         return true;
 #undef CHECK

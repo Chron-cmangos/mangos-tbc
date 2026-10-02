@@ -73,6 +73,7 @@ struct IdleBotAIUpdateRequest
     uint32 mapId;
     uint32 instanceId;
     uint32 transitionGeneration;
+    uint32 dueSinceMs;
 };
 #endif
 
@@ -141,6 +142,12 @@ typedef std::unordered_map<uint32 /*zoneId*/, ZoneDynamicInfo> ZoneDynamicInfoMa
 
 class Map : public GridRefManager<NGridType>
 {
+    public:
+        static std::atomic<uint32> s_watchdogMapId;
+        static std::atomic<uint32> s_watchdogInstanceId;
+        static std::atomic<uint32> s_watchdogPhase;
+
+    private:
         friend class MapReference;
         friend class ObjectGridLoader;
         friend class ObjectWorldLoader;
@@ -434,7 +441,7 @@ class Map : public GridRefManager<NGridType>
         uint32 GetActiveNonPlayerCount() const { return static_cast<uint32>(m_activeNonPlayers.size()); }
 #ifdef ENABLE_PLAYERBOTS
         uint64 GetIdleBotSchedulerCapacity() const { return m_idleBotDueUpdates.capacity() + m_idleBotDispatchUpdates.capacity(); }
-        uint64 GetIdleBotCoreTimerEntries() const { return m_idleBotCoreDiff.size() + m_idleBotCoreTicks.size(); }
+        uint64 GetIdleBotCoreTimerEntries() const { return m_idleBotCoreDiff.size() + m_idleBotCoreTicks.size() + m_idleBotFirstDueMs.size(); }
         void GetPlayerbotAIObjectStats(uint64& aiObjects, uint64& strategies, uint64& actions, uint64& triggers, uint64& values);
 #endif
 
@@ -537,6 +544,7 @@ class Map : public GridRefManager<NGridType>
         uint32 m_LastSlowMapDetailMs = 0;
         uint32 m_SuppressedSlowMapDetails = 0;
         uint32 m_PeakSuppressedSlowMapMs = 0;
+        uint32 m_CellParallelDisabledUntilMs = 0;
         MapPersistentState* m_persistentState;
 
         MapRefManager m_mapRefManager;
@@ -629,9 +637,12 @@ class Map : public GridRefManager<NGridType>
         bool hasRealPlayers;
         std::unordered_map<uint32, uint32> m_idleBotCoreDiff;
         std::unordered_map<uint32, uint32> m_idleBotCoreTicks;
+        std::unordered_map<uint32, uint32> m_idleBotFirstDueMs;
         std::vector<IdleBotAIUpdateRequest> m_idleBotDueUpdates;
         std::vector<IdleBotAIUpdateRequest> m_idleBotDispatchUpdates;
         size_t m_idleBotRoundRobinCursor;
+        uint32 m_backgroundBotBudgetPercent = 100;
+        uint32 m_backgroundBotRecoveryStreak = 0;
 #endif
 
         ZoneDynamicInfoMap m_zoneDynamicInfo;

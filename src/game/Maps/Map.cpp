@@ -55,6 +55,10 @@
 #include "playerbot/playerbot.h"
 #endif
 
+std::atomic<uint32> Map::s_watchdogMapId{0};
+std::atomic<uint32> Map::s_watchdogInstanceId{0};
+std::atomic<uint32> Map::s_watchdogPhase{0};
+
 #include <time.h>
 
 Map::~Map()
@@ -820,6 +824,9 @@ void Map::GetPlayerbotAIObjectStats(uint64& aiObjects, uint64& strategies, uint6
 
 void Map::Update(const uint32& t_diff)
 {
+    s_watchdogMapId.store(GetId(), std::memory_order_relaxed);
+    s_watchdogInstanceId.store(GetInstanceId(), std::memory_order_relaxed);
+    s_watchdogPhase.store(1, std::memory_order_relaxed);
     m_clientUpdateTimer += t_diff;
     if (IsUpdateObjectTick())
         ++m_clientUpdateTick;
@@ -836,6 +843,22 @@ void Map::Update(const uint32& t_diff)
     uint32 performanceSkippedMinimalBotUpdates = 0;
     uint32 performanceDueMinimalBotUpdates = 0;
     uint32 performanceDeferredMinimalBotUpdates = 0;
+    uint32 performanceDynamicTreeElapsed = 0;
+    uint32 performanceMessagerElapsed = 0;
+    uint32 performanceSpawnElapsed = 0;
+    uint32 performanceTransportElapsed = 0;
+    uint32 performanceCellDiscoveryElapsed = 0;
+    uint32 performanceCellWorkerElapsed = 0;
+    uint32 performanceCellMergeElapsed = 0;
+    uint32 performanceObjectElapsed = 0;
+    uint32 performanceScriptElapsed = 0;
+    uint32 performanceInstanceElapsed = 0;
+    uint32 performanceSendElapsed = 0;
+    uint32 performanceGridElapsed = 0;
+    uint32 performanceWeatherElapsed = 0;
+    uint32 performanceMovementFlushElapsed = 0;
+    uint32 performanceActiveCells = 0;
+    uint32 performanceCellChunks = 0;
 
 #ifdef BUILD_METRICS
     metric::duration<std::chrono::milliseconds> meas("map.update", {
@@ -852,10 +875,20 @@ void Map::Update(const uint32& t_diff)
     localtime_r(&m_curTime, &m_curTimeTm);
 #endif
 
+    uint32 performancePhaseStart = WorldTimer::getMSTime();
     m_dyn_tree.update(t_diff);
+    s_watchdogPhase.store(2, std::memory_order_relaxed);
+    performanceDynamicTreeElapsed = WorldTimer::getMSTimeDiff(performancePhaseStart, WorldTimer::getMSTime());
 
+    performancePhaseStart = WorldTimer::getMSTime();
     GetMessager().Execute(this);
+    s_watchdogPhase.store(3, std::memory_order_relaxed);
+    performanceMessagerElapsed = WorldTimer::getMSTimeDiff(performancePhaseStart, WorldTimer::getMSTime());
+
+    performancePhaseStart = WorldTimer::getMSTime();
     m_spawnManager.Update();
+    s_watchdogPhase.store(4, std::memory_order_relaxed);
+    performanceSpawnElapsed = WorldTimer::getMSTimeDiff(performancePhaseStart, WorldTimer::getMSTime());
 
     /// update active cells around players and active objects
     resetMarkedCells();
@@ -864,15 +897,22 @@ void Map::Update(const uint32& t_diff)
     MaNGOS::ObjectUpdater obj_updater(objToUpdate, t_diff);
     TypeContainerVisitor<MaNGOS::ObjectUpdater, GridTypeMapContainer  > grid_object_update(obj_updater);    // For creature
     TypeContainerVisitor<MaNGOS::ObjectUpdater, WorldTypeMapContainer > world_object_update(obj_updater);   // For pets
-    bool const parallelCellDiscovery = IsContinent() && sMapMgr.GetCellUpdater().activated();
+    const uint32 cellNow = WorldTimer::getMSTime();
+    const bool cellFallbackActive = m_CellParallelDisabledUntilMs &&
+        static_cast<int32>(m_CellParallelDisabledUntilMs - cellNow) > 0;
+    bool const parallelCellDiscovery = IsContinent() && sMapMgr.GetCellUpdater().activated() &&
+        !cellFallbackActive &&
+        sMapMgr.GetCellUpdater().GetQueuedRequests() < std::max<size_t>(1, sMapMgr.GetCellUpdater().GetWorkerCount() * 2);
     std::vector<Cell> cellsToVisit;
 
+    performancePhaseStart = WorldTimer::getMSTime();
     for (m_transportsIterator = m_transports.begin(); m_transportsIterator != m_transports.end();)
     {
         Transport* transport = *m_transportsIterator;
         ++m_transportsIterator;
         transport->Update(t_diff);
     }
+    performanceTransportElapsed = WorldTimer::getMSTimeDiff(performancePhaseStart, WorldTimer::getMSTime());
 
     // the player iterator is stored in the map object
     // to make sure calls to Map::Remove don't invalidate it
@@ -931,6 +971,7 @@ void Map::Update(const uint32& t_diff)
 #endif
     }
     performanceSessionElapsed = WorldTimer::getMSTimeDiff(performanceSessionStart, WorldTimer::getMSTime());
+    s_watchdogPhase.store(5, std::memory_order_relaxed);
 
     const uint32 performancePlayerStart = WorldTimer::getMSTime();
 
@@ -1065,12 +1106,18 @@ void Map::Update(const uint32& t_diff)
                 plr->Update(coreUpdateDiff);
 
             const uint32 performanceBotStart = performanceLogging && isPlayerbot ? WorldTimer::getMSTime() : 0;
+            // The adaptive budget must keep measuring bot cost even when verbose
+            // performance logging is disabled.
+            const uint32 performanceBotStart = isPlayerbot ? WorldTimer::getMSTime() : 0;
             if (minimalBotUpdate && sMapMgr.GetIdleBotUpdater().activated())
             {
                 if (plr->GetPlayerbotAI()->AdvanceMinimalUpdateDelay(minimalTimerAdvance))
                 {
+                    uint32& dueSinceMs = m_idleBotFirstDueMs[plr->GetGUIDLow()];
+                    if (!dueSinceMs)
+                        dueSinceMs = WorldTimer::getMSTime();
                     m_idleBotDueUpdates.push_back({plr, minimalTimerAdvance, GetId(), GetInstanceId(),
-                        plr->GetPlayerbotAI()->GetTransitionGeneration()});
+                        plr->GetPlayerbotAI()->GetTransitionGeneration(), dueSinceMs});
                 }
                 else
                     ++performanceSkippedMinimalBotUpdates;
@@ -1078,16 +1125,18 @@ void Map::Update(const uint32& t_diff)
             }
             else if (sPlayerbotAIConfig.disableBotOptimizations)
             {
+                m_idleBotFirstDueMs.erase(plr->GetGUIDLow());
                 plr->UpdateAI(t_diff, false);
             }
             else
             {
+                m_idleBotFirstDueMs.erase(plr->GetGUIDLow());
                 plr->UpdateAI(t_diff, !shouldUpdateBot);
             }
 
             if (isPlayerbot)
             {
-                const uint32 botElapsed = performanceLogging ? WorldTimer::getMSTimeDiff(performanceBotStart, WorldTimer::getMSTime()) : 0;
+                const uint32 botElapsed = WorldTimer::getMSTimeDiff(performanceBotStart, WorldTimer::getMSTime());
                 performanceBotElapsed += botElapsed;
                 if (minimalBotUpdate)
                     ++performanceMinimalBotUpdates;
@@ -1113,13 +1162,51 @@ void Map::Update(const uint32& t_diff)
     if (!m_idleBotDueUpdates.empty())
     {
         size_t const dueCount = m_idleBotDueUpdates.size();
-        size_t const maxUpdates = sWorld.getConfig(CONFIG_UINT32_MAP_IDLE_BOT_MAX_UPDATES_PER_TICK);
-        size_t const dispatchCount = std::min(dueCount, maxUpdates);
+        const uint32 botBudgetMs = sWorld.getConfig(CONFIG_UINT32_ADAPTIVE_LOAD_BOT_BUDGET_MS);
+        const uint32 slowWorldMs = sWorld.getConfig(CONFIG_UINT32_ADAPTIVE_LOAD_SLOW_WORLD_MS);
+        const uint32 recoverWorldMs = sWorld.getConfig(CONFIG_UINT32_ADAPTIVE_LOAD_RECOVER_WORLD_MS);
+        if (performanceBotElapsed >= botBudgetMs || sWorld.GetAverageDiff() >= slowWorldMs)
+        {
+            m_backgroundBotBudgetPercent = std::max<uint32>(25, m_backgroundBotBudgetPercent > 25 ? m_backgroundBotBudgetPercent - 25 : 25);
+            m_backgroundBotRecoveryStreak = 0;
+        }
+        else if (sWorld.GetAverageDiff() <= recoverWorldMs &&
+            ++m_backgroundBotRecoveryStreak >= sWorld.getConfig(CONFIG_UINT32_ADAPTIVE_LOAD_BOT_RECOVERY_TICKS))
+        {
+            m_backgroundBotBudgetPercent = std::min<uint32>(100, m_backgroundBotBudgetPercent + 10);
+            m_backgroundBotRecoveryStreak = 0;
+        }
+
+        size_t const configuredMaxUpdates = sWorld.getConfig(CONFIG_UINT32_MAP_IDLE_BOT_MAX_UPDATES_PER_TICK);
+        size_t const minimumUpdates = sWorld.getConfig(CONFIG_UINT32_ADAPTIVE_LOAD_BACKGROUND_BOT_MIN_UPDATES);
+        size_t const maxUpdates = std::max(minimumUpdates, configuredMaxUpdates * m_backgroundBotBudgetPercent / 100);
+        uint32 const now = WorldTimer::getMSTime();
+        uint32 const maxDeferralMs = sWorld.getConfig(CONFIG_UINT32_ADAPTIVE_LOAD_BACKGROUND_BOT_MAX_DEFERRAL_MS);
+        size_t forcedUpdates = 0;
+        for (IdleBotAIUpdateRequest const& request : m_idleBotDueUpdates)
+            if (WorldTimer::getMSTimeDiff(request.dueSinceMs, now) >= maxDeferralMs)
+                ++forcedUpdates;
+        size_t const dispatchCount = std::min(dueCount, std::max(maxUpdates, forcedUpdates));
         m_idleBotRoundRobinCursor %= dueCount;
         m_idleBotDispatchUpdates.reserve(std::max(m_idleBotDispatchUpdates.capacity(), dispatchCount));
-        for (size_t i = 0; i < dispatchCount; ++i)
-            m_idleBotDispatchUpdates.push_back(m_idleBotDueUpdates[(m_idleBotRoundRobinCursor + i) % dueCount]);
-        m_idleBotRoundRobinCursor = (m_idleBotRoundRobinCursor + dispatchCount) % dueCount;
+        for (IdleBotAIUpdateRequest const& request : m_idleBotDueUpdates)
+        {
+            if (WorldTimer::getMSTimeDiff(request.dueSinceMs, now) < maxDeferralMs)
+                continue;
+            m_idleBotDispatchUpdates.push_back(request);
+            m_idleBotFirstDueMs.erase(request.player->GetGUIDLow());
+        }
+        size_t regularScanned = 0;
+        while (m_idleBotDispatchUpdates.size() < dispatchCount && regularScanned < dueCount)
+        {
+            IdleBotAIUpdateRequest const& request = m_idleBotDueUpdates[(m_idleBotRoundRobinCursor + regularScanned) % dueCount];
+            ++regularScanned;
+            if (WorldTimer::getMSTimeDiff(request.dueSinceMs, now) >= maxDeferralMs)
+                continue;
+            m_idleBotDispatchUpdates.push_back(request);
+            m_idleBotFirstDueMs.erase(request.player->GetGUIDLow());
+        }
+        m_idleBotRoundRobinCursor = (m_idleBotRoundRobinCursor + std::max<size_t>(1, regularScanned)) % dueCount;
         performanceMinimalBotUpdates += static_cast<uint32>(dispatchCount);
         performanceDeferredMinimalBotUpdates = static_cast<uint32>(dueCount - dispatchCount);
         performanceSkippedMinimalBotUpdates += performanceDeferredMinimalBotUpdates;
@@ -1156,7 +1243,9 @@ void Map::Update(const uint32& t_diff)
 #endif
 
     performancePlayerElapsed = WorldTimer::getMSTimeDiff(performancePlayerStart, WorldTimer::getMSTime());
+    s_watchdogPhase.store(6, std::memory_order_relaxed);
 
+    const uint32 performanceCellDiscoveryStart = WorldTimer::getMSTime();
     for (m_mapRefIter = m_mapRefManager.begin(); m_mapRefIter != m_mapRefManager.end(); ++m_mapRefIter)
     {
         Player* player = m_mapRefIter->getSource();
@@ -1319,10 +1408,27 @@ void Map::Update(const uint32& t_diff)
         }
     }
 
-    if (parallelCellDiscovery && !cellsToVisit.empty())
+    performanceActiveCells = static_cast<uint32>(cellsToVisit.size());
+    const uint32 minimumParallelCells = sWorld.getConfig(CONFIG_UINT32_MAP_CELL_MIN_PARALLEL_CELLS);
+    const bool useParallelCellDiscovery = parallelCellDiscovery && cellsToVisit.size() >= minimumParallelCells;
+
+    if (parallelCellDiscovery && !useParallelCellDiscovery)
+    {
+        for (Cell const& cell : cellsToVisit)
+        {
+            Visit(cell, grid_object_update);
+            Visit(cell, world_object_update);
+        }
+    }
+    performanceCellDiscoveryElapsed = WorldTimer::getMSTimeDiff(performanceCellDiscoveryStart, WorldTimer::getMSTime());
+    s_watchdogPhase.store(7, std::memory_order_relaxed);
+
+    if (useParallelCellDiscovery)
     {
         MapUpdater& updater = sMapMgr.GetCellUpdater();
-        size_t const chunkSize = sWorld.getConfig(CONFIG_UINT32_MAP_CELL_CHUNK_SIZE);
+        size_t const maximumChunks = sWorld.getConfig(CONFIG_UINT32_MAP_CELL_MAX_CHUNKS_PER_MAP);
+        size_t const configuredChunkSize = sWorld.getConfig(CONFIG_UINT32_MAP_CELL_CHUNK_SIZE);
+        size_t const chunkSize = std::max(configuredChunkSize, (cellsToVisit.size() + maximumChunks - 1) / maximumChunks);
         std::vector<std::unique_ptr<WorldObjectUnSet>> workerObjects;
         workerObjects.reserve((cellsToVisit.size() + chunkSize - 1) / chunkSize);
         MapUpdateTaskGroup taskGroup;
@@ -1336,25 +1442,49 @@ void Map::Update(const uint32& t_diff)
             updater.schedule_update(new GridCrawler(*this, std::move(chunk), *workerObjects.back(), t_diff, taskGroup, updater));
         }
 
+        performanceCellChunks = static_cast<uint32>(workerObjects.size());
+        const uint32 waitStart = WorldTimer::getMSTime();
         taskGroup.Wait();
+        s_watchdogPhase.store(8, std::memory_order_relaxed);
+        performanceCellWorkerElapsed = WorldTimer::getMSTimeDiff(waitStart, WorldTimer::getMSTime());
+        if (performanceCellWorkerElapsed > sWorld.getConfig(CONFIG_UINT32_MAP_CELL_MAX_WAIT_MS))
+        {
+            m_CellParallelDisabledUntilMs = WorldTimer::getMSTime() +
+                sWorld.getConfig(CONFIG_UINT32_MAP_CELL_FALLBACK_SECONDS) * IN_MILLISECONDS;
+            if (performanceLogging)
+                sLog.outPerformance("CELL_FALLBACK map=%u instance=%u wait=%u ms cells=%u chunks=%u seconds=%u",
+                    GetId(), GetInstanceId(), performanceCellWorkerElapsed, performanceActiveCells, performanceCellChunks,
+                    sWorld.getConfig(CONFIG_UINT32_MAP_CELL_FALLBACK_SECONDS));
+        }
+
+        const uint32 mergeStart = WorldTimer::getMSTime();
         for (auto const& objects : workerObjects)
             objToUpdate.insert(objects->begin(), objects->end());
+        performanceCellMergeElapsed = WorldTimer::getMSTimeDiff(mergeStart, WorldTimer::getMSTime());
     }
 
+    performancePhaseStart = WorldTimer::getMSTime();
     uint64 count = PerformObjectUpdate(t_diff, objToUpdate);
+    performanceObjectElapsed = WorldTimer::getMSTimeDiff(performancePhaseStart, WorldTimer::getMSTime());
+    s_watchdogPhase.store(9, std::memory_order_relaxed);
 
 #ifdef BUILD_METRICS
     meas.add_field("count", std::to_string(static_cast<int32>(count)));
 #endif
 
     // Process necessary scripts
+    performancePhaseStart = WorldTimer::getMSTime();
     if (!m_scriptSchedule.empty())
         ScriptsProcess();
+    performanceScriptElapsed = WorldTimer::getMSTimeDiff(performancePhaseStart, WorldTimer::getMSTime());
 
+    performancePhaseStart = WorldTimer::getMSTime();
     if (i_data)
         i_data->Update(t_diff);
+    performanceInstanceElapsed = WorldTimer::getMSTimeDiff(performancePhaseStart, WorldTimer::getMSTime());
 
     // Send world objects and item update field changes
+    performancePhaseStart = WorldTimer::getMSTime();
     if (IsUpdateObjectTick())
     {
         SendObjectUpdates();
@@ -1362,9 +1492,11 @@ void Map::Update(const uint32& t_diff)
         if (m_clientUpdateTick > 30)
             m_clientUpdateTick = 0;
     }
+    performanceSendElapsed = WorldTimer::getMSTimeDiff(performancePhaseStart, WorldTimer::getMSTime());
 
     // Don't unload grids if it's battleground, since we may have manually added GOs,creatures, those doesn't load from DB at grid re-load !
     // This isn't really bother us, since as soon as we have instanced BG-s, the whole map unloads as the BG gets ended
+    performancePhaseStart = WorldTimer::getMSTime();
     if (!IsBattleGroundOrArena())
     {
         for (GridRefManager<NGridType>::iterator i = GridRefManager<NGridType>::begin(); i != GridRefManager<NGridType>::end();)
@@ -1376,9 +1508,13 @@ void Map::Update(const uint32& t_diff)
             sMapMgr.UpdateGridState(grid->GetGridState(), *this, *grid, *info, grid->getX(), grid->getY(), t_diff);
         }
     }
+    performanceGridElapsed = WorldTimer::getMSTimeDiff(performancePhaseStart, WorldTimer::getMSTime());
 
+    performancePhaseStart = WorldTimer::getMSTime();
     m_weatherSystem->UpdateWeathers(t_diff);
+    performanceWeatherElapsed = WorldTimer::getMSTimeDiff(performancePhaseStart, WorldTimer::getMSTime());
 
+    performancePhaseStart = WorldTimer::getMSTime();
     for (m_mapRefIter = m_mapRefManager.begin(); m_mapRefIter != m_mapRefManager.end(); ++m_mapRefIter)
     {
         if (Player* player = m_mapRefIter->getSource())
@@ -1387,6 +1523,8 @@ void Map::Update(const uint32& t_diff)
                 session->FlushMovementPackets();
         }
     }
+    performanceMovementFlushElapsed = WorldTimer::getMSTimeDiff(performancePhaseStart, WorldTimer::getMSTime());
+    s_watchdogPhase.store(12, std::memory_order_relaxed);
 
     if (performanceLogging)
     {
@@ -1401,9 +1539,21 @@ void Map::Update(const uint32& t_diff)
             uint32 const now = WorldTimer::getMSTime();
             if (!m_LastSlowMapDetailMs || WorldTimer::getMSTimeDiff(m_LastSlowMapDetailMs, now) >= detailInterval)
             {
-                sLog.outPerformance("SLOW_MAP map=%u instance=%u name=%s total=%u ms peak=%u ms samples=%u sessions=%u ms players_phase=%u ms bot_ai=%u ms players=%u bots=%u bot_full=%u bot_minimal=%u bot_minimal_due=%u bot_minimal_deferred=%u bot_minimal_skipped=%u objects=%llu input_diff=%u ms",
+                const uint32 playerCoreElapsed = performancePlayerElapsed > performanceBotElapsed ? performancePlayerElapsed - performanceBotElapsed : 0;
+                const uint32 attributedElapsed = performanceDynamicTreeElapsed + performanceMessagerElapsed + performanceSpawnElapsed +
+                    performanceTransportElapsed + performanceSessionElapsed + playerCoreElapsed + performanceBotElapsed +
+                    performanceCellDiscoveryElapsed + performanceCellWorkerElapsed + performanceCellMergeElapsed +
+                    performanceObjectElapsed + performanceScriptElapsed + performanceInstanceElapsed + performanceSendElapsed +
+                    performanceGridElapsed + performanceWeatherElapsed + performanceMovementFlushElapsed;
+                const uint32 unclassifiedElapsed = performanceTotalElapsed > attributedElapsed ? performanceTotalElapsed - attributedElapsed : 0;
+                sLog.outPerformance("SLOW_MAP map=%u instance=%u name=%s total=%u ms peak=%u ms samples=%u dyn=%u ms messager=%u ms spawn=%u ms transports=%u ms sessions=%u ms player_core=%u ms bot_ai=%u ms bot_budget_pct=%u cell_discovery=%u ms cell_worker=%u ms cell_merge=%u ms objects_phase=%u ms scripts=%u ms instance_phase=%u ms send=%u ms grids=%u ms weather=%u ms movement_flush=%u ms unclassified=%u ms active_cells=%u cell_chunks=%u players=%u bots=%u bot_full=%u bot_minimal=%u bot_minimal_due=%u bot_minimal_deferred=%u bot_minimal_skipped=%u objects=%llu input_diff=%u ms",
                     GetId(), GetInstanceId(), GetMapName(), performanceTotalElapsed, m_PeakSuppressedSlowMapMs,
-                    m_SuppressedSlowMapDetails, performanceSessionElapsed, performancePlayerElapsed, performanceBotElapsed,
+                    m_SuppressedSlowMapDetails, performanceDynamicTreeElapsed, performanceMessagerElapsed, performanceSpawnElapsed,
+                    performanceTransportElapsed, performanceSessionElapsed, playerCoreElapsed, performanceBotElapsed, m_backgroundBotBudgetPercent,
+                    performanceCellDiscoveryElapsed, performanceCellWorkerElapsed, performanceCellMergeElapsed,
+                    performanceObjectElapsed, performanceScriptElapsed, performanceInstanceElapsed, performanceSendElapsed,
+                    performanceGridElapsed, performanceWeatherElapsed, performanceMovementFlushElapsed, unclassifiedElapsed,
+                    performanceActiveCells, performanceCellChunks,
                     performancePlayerCount, performanceBotCount, performanceFullBotUpdates, performanceMinimalBotUpdates,
                     performanceDueMinimalBotUpdates, performanceDeferredMinimalBotUpdates, performanceSkippedMinimalBotUpdates,
                     static_cast<unsigned long long>(count), t_diff);
@@ -1413,6 +1563,8 @@ void Map::Update(const uint32& t_diff)
             }
         }
     }
+
+    s_watchdogPhase.store(0, std::memory_order_relaxed);
 }
 
 uint64 Map::PerformObjectUpdate(uint32 t_diff, WorldObjectUnSet& objToUpdate)
@@ -1435,6 +1587,12 @@ uint64 Map::PerformObjectUpdate(uint32 t_diff, WorldObjectUnSet& objToUpdate)
 
 void Map::Remove(Player* player, bool remove)
 {
+#ifdef ENABLE_PLAYERBOTS
+    m_idleBotCoreDiff.erase(player->GetGUIDLow());
+    m_idleBotCoreTicks.erase(player->GetGUIDLow());
+    m_idleBotFirstDueMs.erase(player->GetGUIDLow());
+#endif
+
     if (i_data)
         i_data->OnPlayerLeave(player);
 
@@ -3499,7 +3657,7 @@ float Map::GetHeight(float x, float y, float z, bool swim) const
     // Protect both static terrain and dynamic-object collision queries.
     if (!MaNGOS::IsValidMapCoord(x, y, z))
         return INVALID_HEIGHT;
-    
+
     float staticHeight = m_TerrainData->GetHeightStatic(x, y, z, true, (swim ? DEFAULT_WATER_SEARCH : DEFAULT_HEIGHT_SEARCH));
 
     // Get Dynamic Height around static Height (if valid)
