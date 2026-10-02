@@ -61,6 +61,7 @@ constexpr std::array<std::string_view, SCRIPT_TYPE_MAX> scriptTableNames
 };
 
 namespace
+{
 struct RepeatedDbScriptWarning
 {
     uint32 windowStartMs;
@@ -113,6 +114,7 @@ bool ShouldReportDbScriptWarning(uint64 key, uint32& suppressed, uint32& windowM
     windowMs = WorldTimer::getMSTimeDiff(itr->second.windowStartMs, now);
     itr->second = {now, now, 0};
     return true;
+}
 }
 
 ScriptMgr::ScriptMgr()
