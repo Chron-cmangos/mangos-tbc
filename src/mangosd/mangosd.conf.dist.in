@@ -302,6 +302,9 @@ Spawns.ZoneArea = 0
 #
 #    MapUpdate.IdleBotThreads
 #    MapUpdate.IdleBotChunkSize
+#    MapUpdate.IdleBotMaxUpdatesPerTick
+#    MapUpdate.IdleBotMaxTimerAdvanceMs
+#    MapUpdate.IdleBotJitterMs
 #        Experimental worker lanes for minimal AI updates of bots that are away
 #        from real players, combat, battlegrounds, and real-player groups.
 #        Zero keeps idle bot AI on the owning map thread.
@@ -414,6 +417,9 @@ MapUpdate.ObjectThreads = 1
 MapUpdate.VisibilityChunkSize = 64
 MapUpdate.IdleBotThreads = 2
 MapUpdate.IdleBotChunkSize = 64
+MapUpdate.IdleBotMaxUpdatesPerTick = 128
+MapUpdate.IdleBotMaxTimerAdvanceMs = 250
+MapUpdate.IdleBotJitterMs = 4000
 MapUpdate.CellThreads = 2
 MapUpdate.CellChunkSize = 64
 Playerbot.StaggerBackgroundUpdates = 1

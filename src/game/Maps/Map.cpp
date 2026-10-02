@@ -199,7 +199,7 @@ Map::Map(uint32 id, time_t expiry, uint32 InstanceId, uint8 SpawnMode)
       i_gridExpiry(expiry), m_TerrainData(sTerrainMgr.LoadTerrain(id)),
       i_data(nullptr), i_script_id(0), m_transportsIterator(m_transports.begin()), m_spawnManager(*this),
 #ifdef ENABLE_PLAYERBOTS
-      m_activeZonesTimer(0), hasRealPlayers(false),
+      m_activeZonesTimer(0), hasRealPlayers(false), m_idleBotRoundRobinCursor(0),
 #endif
       m_variableManager(this), m_defaultLight(GetDefaultMapLight(id))
 {
@@ -785,6 +785,39 @@ void Map::CollectNearbyCellsOf(WorldObject* obj, std::vector<Cell>& cells)
     }
 }
 
+uint32 Map::GetAllocatedGridsCount() const
+{
+    uint32 count = 0;
+    for (uint32 i = 0; i < MAX_NUMBER_OF_GRIDS; ++i)
+        for (uint32 k = 0; k < MAX_NUMBER_OF_GRIDS; ++k)
+            if (i_grids[i][k])
+                ++count;
+    return count;
+}
+
+#ifdef ENABLE_PLAYERBOTS
+void Map::GetPlayerbotAIObjectStats(uint64& aiObjects, uint64& strategies, uint64& actions, uint64& triggers, uint64& values)
+{
+    for (auto itr = m_mapRefManager.begin(); itr != m_mapRefManager.end(); ++itr)
+    {
+        Player* player = itr->getSource();
+        if (!player)
+            continue;
+        PlayerbotAI* ai = player->GetPlayerbotAI();
+        if (!ai || ai->IsRealPlayer())
+            continue;
+        ++aiObjects;
+        if (AiObjectContext* context = ai->GetAiObjectContext())
+        {
+            strategies += context->GetCreatedStrategyCount();
+            actions += context->GetCreatedActionCount();
+            triggers += context->GetCreatedTriggerCount();
+            values += context->GetCreatedValueCount();
+        }
+    }
+}
+#endif
+
 void Map::Update(const uint32& t_diff)
 {
     m_clientUpdateTimer += t_diff;
@@ -801,6 +834,8 @@ void Map::Update(const uint32& t_diff)
     uint32 performanceFullBotUpdates = 0;
     uint32 performanceMinimalBotUpdates = 0;
     uint32 performanceSkippedMinimalBotUpdates = 0;
+    uint32 performanceDueMinimalBotUpdates = 0;
+    uint32 performanceDeferredMinimalBotUpdates = 0;
 
 #ifdef BUILD_METRICS
     metric::duration<std::chrono::milliseconds> meas("map.update", {
@@ -920,7 +955,9 @@ void Map::Update(const uint32& t_diff)
 
     bool shouldUpdateBots = urand(0, (uint32)(botUpdateChance * 100)) < 100;
     const uint32 backgroundBotCadence = std::max<uint32>(1, static_cast<uint32>(std::ceil(botUpdateChance)));
-    std::vector<std::pair<Player*, uint32>> parallelIdleBots;
+    m_idleBotDueUpdates.clear();
+    m_idleBotDispatchUpdates.clear();
+    uint32 const minimalTimerAdvance = std::min<uint32>(t_diff, sWorld.getConfig(CONFIG_UINT32_MAP_IDLE_BOT_MAX_TIMER_ADVANCE_MS));
 #endif
 
     /// update players at tick
@@ -995,10 +1032,9 @@ void Map::Update(const uint32& t_diff)
             const uint32 performanceBotStart = performanceLogging && isPlayerbot ? WorldTimer::getMSTime() : 0;
             if (minimalBotUpdate && sMapMgr.GetIdleBotUpdater().activated())
             {
-                if (plr->GetPlayerbotAI()->AdvanceMinimalUpdateDelay(t_diff))
+                if (plr->GetPlayerbotAI()->AdvanceMinimalUpdateDelay(minimalTimerAdvance))
                 {
-                    parallelIdleBots.emplace_back(plr, t_diff);
-                    ++performanceMinimalBotUpdates;
+                    m_idleBotDueUpdates.emplace_back(plr, minimalTimerAdvance);
                 }
                 else
                     ++performanceSkippedMinimalBotUpdates;
@@ -1035,23 +1071,40 @@ void Map::Update(const uint32& t_diff)
     }
 
 #ifdef ENABLE_PLAYERBOTS
-    if (!parallelIdleBots.empty())
+    performanceDueMinimalBotUpdates = static_cast<uint32>(m_idleBotDueUpdates.size());
+    if (!m_idleBotDueUpdates.empty())
     {
+        size_t const dueCount = m_idleBotDueUpdates.size();
+        size_t const maxUpdates = sWorld.getConfig(CONFIG_UINT32_MAP_IDLE_BOT_MAX_UPDATES_PER_TICK);
+        size_t const dispatchCount = std::min(dueCount, maxUpdates);
+        m_idleBotRoundRobinCursor %= dueCount;
+        m_idleBotDispatchUpdates.reserve(std::max(m_idleBotDispatchUpdates.capacity(), dispatchCount));
+        for (size_t i = 0; i < dispatchCount; ++i)
+            m_idleBotDispatchUpdates.push_back(m_idleBotDueUpdates[(m_idleBotRoundRobinCursor + i) % dueCount]);
+        m_idleBotRoundRobinCursor = (m_idleBotRoundRobinCursor + dispatchCount) % dueCount;
+        performanceMinimalBotUpdates += static_cast<uint32>(dispatchCount);
+        performanceDeferredMinimalBotUpdates = static_cast<uint32>(dueCount - dispatchCount);
+        performanceSkippedMinimalBotUpdates += performanceDeferredMinimalBotUpdates;
+
         uint32 const parallelBotStart = performanceLogging ? WorldTimer::getMSTime() : 0;
         MapUpdater& updater = sMapMgr.GetIdleBotUpdater();
         MapUpdateTaskGroup taskGroup;
         size_t const chunkSize = sWorld.getConfig(CONFIG_UINT32_MAP_IDLE_BOT_CHUNK_SIZE);
-        for (size_t offset = 0; offset < parallelIdleBots.size(); offset += chunkSize)
+        uint32 const jitterMs = sWorld.getConfig(CONFIG_UINT32_MAP_IDLE_BOT_JITTER_MS);
+        for (size_t offset = 0; offset < m_idleBotDispatchUpdates.size(); offset += chunkSize)
         {
-            size_t const end = std::min(parallelIdleBots.size(), offset + chunkSize);
-            std::vector<std::pair<Player*, uint32>> chunk(parallelIdleBots.begin() + offset, parallelIdleBots.begin() + end);
+            size_t const count = std::min(chunkSize, m_idleBotDispatchUpdates.size() - offset);
             taskGroup.Add();
-            updater.schedule_update(new IdleBotAIUpdateWorker(std::move(chunk), taskGroup, updater));
+            updater.schedule_update(new IdleBotAIUpdateWorker(m_idleBotDispatchUpdates.data() + offset, count, jitterMs, taskGroup, updater));
         }
         taskGroup.Wait();
         if (performanceLogging)
             performanceBotElapsed += WorldTimer::getMSTimeDiff(parallelBotStart, WorldTimer::getMSTime());
     }
+    else
+        m_idleBotRoundRobinCursor = 0;
+    m_idleBotDueUpdates.clear();
+    m_idleBotDispatchUpdates.clear();
 #endif
 
 #ifdef ENABLE_PLAYERBOTS
@@ -1309,11 +1362,12 @@ void Map::Update(const uint32& t_diff)
             uint32 const now = WorldTimer::getMSTime();
             if (!m_LastSlowMapDetailMs || WorldTimer::getMSTimeDiff(m_LastSlowMapDetailMs, now) >= detailInterval)
             {
-                sLog.outPerformance("SLOW_MAP map=%u instance=%u name=%s total=%u ms peak=%u ms samples=%u sessions=%u ms players_phase=%u ms bot_ai=%u ms players=%u bots=%u bot_full=%u bot_minimal=%u bot_minimal_skipped=%u objects=%llu input_diff=%u ms",
+                sLog.outPerformance("SLOW_MAP map=%u instance=%u name=%s total=%u ms peak=%u ms samples=%u sessions=%u ms players_phase=%u ms bot_ai=%u ms players=%u bots=%u bot_full=%u bot_minimal=%u bot_minimal_due=%u bot_minimal_deferred=%u bot_minimal_skipped=%u objects=%llu input_diff=%u ms",
                     GetId(), GetInstanceId(), GetMapName(), performanceTotalElapsed, m_PeakSuppressedSlowMapMs,
                     m_SuppressedSlowMapDetails, performanceSessionElapsed, performancePlayerElapsed, performanceBotElapsed,
                     performancePlayerCount, performanceBotCount, performanceFullBotUpdates, performanceMinimalBotUpdates,
-                    performanceSkippedMinimalBotUpdates, static_cast<unsigned long long>(count), t_diff);
+                    performanceDueMinimalBotUpdates, performanceDeferredMinimalBotUpdates, performanceSkippedMinimalBotUpdates,
+                    static_cast<unsigned long long>(count), t_diff);
                 m_LastSlowMapDetailMs = now;
                 m_SuppressedSlowMapDetails = 0;
                 m_PeakSuppressedSlowMapMs = 0;

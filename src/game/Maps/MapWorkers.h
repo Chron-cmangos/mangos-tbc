@@ -27,6 +27,10 @@
 #include "Entities/UpdateData.h"
 #include "Platform/Define.h"
 
+#ifdef ENABLE_PLAYERBOTS
+#include "playerbot/PlayerbotAI.h"
+#endif
+
 class MapUpdateTaskGroup
 {
     public:
@@ -148,18 +152,23 @@ class ObjectUpdateBuildWorker : public Worker
 class IdleBotAIUpdateWorker : public Worker
 {
     public:
-        IdleBotAIUpdateWorker(std::vector<std::pair<Player*, uint32>>&& updates,
+        IdleBotAIUpdateWorker(std::pair<Player*, uint32> const* updates, size_t count, uint32 jitterMs,
             MapUpdateTaskGroup& group, MapUpdater& updater) :
-            Worker(updater), m_updates(std::move(updates)), m_group(group)
+            Worker(updater), m_updates(updates), m_count(count), m_jitterMs(jitterMs), m_group(group)
         {}
 
         void execute() override
         {
-            for (auto const& update : m_updates)
+            for (size_t i = 0; i < m_count; ++i)
             {
+                auto const& update = m_updates[i];
                 Player* player = update.first;
                 if (player && player->IsInWorld())
-                    player->UpdateAI(update.second, true);
+                {
+                    player->UpdateAI(update.second, true, true);
+                    if (PlayerbotAI* ai = player->GetPlayerbotAI())
+                        ai->ScheduleNextMinimalUpdate(player->GetGUIDLow(), m_jitterMs);
+                }
             }
 
             m_group.Done();
@@ -167,7 +176,9 @@ class IdleBotAIUpdateWorker : public Worker
         }
 
     private:
-        std::vector<std::pair<Player*, uint32>> m_updates;
+        std::pair<Player*, uint32> const* m_updates;
+        size_t m_count;
+        uint32 m_jitterMs;
         MapUpdateTaskGroup& m_group;
 };
 #endif

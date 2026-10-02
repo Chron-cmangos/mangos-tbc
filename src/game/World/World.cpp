@@ -81,6 +81,8 @@
 #include "ahbot/AhBot.h"
 #include "playerbot/PlayerbotAIConfig.h"
 #include "playerbot/RandomPlayerbotMgr.h"
+#include "playerbot/RandomItemMgr.h"
+#include "playerbot/TravelMgr.h"
 #endif
 
 #ifdef ENABLE_MODULES
@@ -635,6 +637,9 @@ void World::LoadConfigSettings(bool reload)
     setConfigMin(CONFIG_UINT32_MAP_VISIBILITY_CHUNK_SIZE, "MapUpdate.VisibilityChunkSize", 64, 8);
     setConfig(CONFIG_UINT32_MAP_IDLE_BOT_THREADS, "MapUpdate.IdleBotThreads", 2);
     setConfigMin(CONFIG_UINT32_MAP_IDLE_BOT_CHUNK_SIZE, "MapUpdate.IdleBotChunkSize", 64, 8);
+    setConfigMin(CONFIG_UINT32_MAP_IDLE_BOT_MAX_UPDATES_PER_TICK, "MapUpdate.IdleBotMaxUpdatesPerTick", 128, 8);
+    setConfigMin(CONFIG_UINT32_MAP_IDLE_BOT_MAX_TIMER_ADVANCE_MS, "MapUpdate.IdleBotMaxTimerAdvanceMs", 250, 1);
+    setConfig(CONFIG_UINT32_MAP_IDLE_BOT_JITTER_MS, "MapUpdate.IdleBotJitterMs", 4000);
     setConfig(CONFIG_UINT32_MAP_CELL_THREADS, "MapUpdate.CellThreads", 2);
     setConfigMin(CONFIG_UINT32_MAP_CELL_CHUNK_SIZE, "MapUpdate.CellChunkSize", 64, 8);
     setConfig(CONFIG_BOOL_PERFORMANCE_LOG_ENABLED, "PerformanceLog.Enabled", true);
@@ -1942,6 +1947,116 @@ void World::Update(uint32 diff)
                 getConfig(CONFIG_UINT32_INTERVAL_MAPUPDATE),
                 static_cast<unsigned long long>(workingSetMb), static_cast<unsigned long long>(privateMb),
                 pendingCallbacks, pendingDbOperations);
+
+            uint64 allocatedGrids = 0;
+            uint64 activeGrids = 0;
+            uint64 mapPlayers = 0;
+            uint64 activeNonPlayers = 0;
+            uint64 idleSchedulerCapacity = 0;
+            uint64 idleCoreTimerEntries = 0;
+            uint64 aiObjects = 0;
+            uint64 aiStrategies = 0;
+            uint64 aiActions = 0;
+            uint64 aiTriggers = 0;
+            uint64 aiValues = 0;
+            sMapMgr.DoForAllMaps([&](Map* map)
+            {
+                allocatedGrids += map->GetAllocatedGridsCount();
+                activeGrids += map->GetLoadedGridsCount();
+                mapPlayers += map->GetPlayerCount();
+                activeNonPlayers += map->GetActiveNonPlayerCount();
+#ifdef ENABLE_PLAYERBOTS
+                idleSchedulerCapacity += map->GetIdleBotSchedulerCapacity();
+                idleCoreTimerEntries += map->GetIdleBotCoreTimerEntries();
+                map->GetPlayerbotAIObjectStats(aiObjects, aiStrategies, aiActions, aiTriggers, aiValues);
+#endif
+            });
+
+            MapUpdater& mapUpdater = sMapMgr.GetMapUpdater();
+            MapUpdater& objectUpdater = sMapMgr.GetObjectUpdater();
+            MapUpdater& idleUpdater = sMapMgr.GetIdleBotUpdater();
+            MapUpdater& cellUpdater = sMapMgr.GetCellUpdater();
+            uint64 const mapQueuePeak = mapUpdater.ConsumePeakPendingRequests();
+            uint64 const objectQueuePeak = objectUpdater.ConsumePeakPendingRequests();
+            uint64 const idleQueuePeak = idleUpdater.ConsumePeakPendingRequests();
+            uint64 const cellQueuePeak = cellUpdater.ConsumePeakPendingRequests();
+
+            MMAP::MMapManager* mmap = MMAP::MMapFactory::createOrGetMMapManager();
+            uint64 const navMapQueries = mmap->getMapThreadQueryCount();
+            uint64 const navModelQueries = mmap->getModelThreadQueryCount();
+            uint64 itemRandom = 0, itemEquip = 0, itemInfo = 0, itemConsumable = 0, itemTrade = 0, itemEnchant = 0;
+            uint64 travelDestinations = 0, travelPoints = 0, travelFish = 0, travelAreaLevels = 0, travelBadMmaps = 0, travelTransfers = 0;
+            uint64 aiValuesReleased = 0;
+#ifdef ENABLE_PLAYERBOTS
+            RandomItemCacheStats const itemCaches = sRandomItemMgr.GetCacheStats();
+            ai::TravelMgr::CacheStats const travelCaches = sTravelMgr.GetCacheStats();
+            itemRandom = itemCaches.randomItems;
+            itemEquip = itemCaches.equipmentItems;
+            itemInfo = itemCaches.itemInfoEntries;
+            itemConsumable = itemCaches.consumableItems;
+            itemTrade = itemCaches.tradeItems;
+            itemEnchant = itemCaches.enchantItems;
+            travelDestinations = travelCaches.destinations;
+            travelPoints = travelCaches.points;
+            travelFish = travelCaches.fishPoints;
+            travelAreaLevels = travelCaches.areaLevels;
+            travelBadMmaps = travelCaches.badMmaps;
+            travelTransfers = travelCaches.mapTransfers;
+            aiValuesReleased = AiObjectContext::GetExpiredValuesReleased();
+#endif
+
+            sLog.outPerformance("MEMORY_SUMMARY working_set_mb=%llu private_mb=%llu maps=%u grids_allocated=%llu grids_active=%llu map_players=%llu active_nonplayers=%llu ai_objects=%llu ai_strategies=%llu ai_actions=%llu ai_triggers=%llu ai_values=%llu ai_values_released=%llu idle_scheduler_capacity=%llu idle_core_timer_entries=%llu queue_map_peak=%llu queue_object_peak=%llu queue_idle_peak=%llu queue_cell_peak=%llu queue_map_pending=%llu queue_object_pending=%llu queue_idle_pending=%llu queue_cell_pending=%llu queue_map_queued=%llu queue_object_queued=%llu queue_idle_queued=%llu queue_cell_queued=%llu nav_maps=%u nav_tiles=%u nav_models=%u nav_map_thread_queries=%llu nav_model_thread_queries=%llu nav_query_allocations=%llu nav_query_frees=%llu nav_query_highwater=%llu item_random=%llu item_equip=%llu item_info=%llu item_consumable=%llu item_trade=%llu item_enchant=%llu travel_destinations=%llu travel_points=%llu travel_fish=%llu travel_area_levels=%llu travel_bad_mmaps=%llu travel_transfers=%llu",
+                static_cast<unsigned long long>(workingSetMb), static_cast<unsigned long long>(privateMb), static_cast<uint32>(sMapMgr.Maps().size()),
+                static_cast<unsigned long long>(allocatedGrids), static_cast<unsigned long long>(activeGrids),
+                static_cast<unsigned long long>(mapPlayers), static_cast<unsigned long long>(activeNonPlayers),
+                static_cast<unsigned long long>(aiObjects), static_cast<unsigned long long>(aiStrategies),
+                static_cast<unsigned long long>(aiActions), static_cast<unsigned long long>(aiTriggers), static_cast<unsigned long long>(aiValues),
+                static_cast<unsigned long long>(aiValuesReleased),
+                static_cast<unsigned long long>(idleSchedulerCapacity), static_cast<unsigned long long>(idleCoreTimerEntries),
+                static_cast<unsigned long long>(mapQueuePeak), static_cast<unsigned long long>(objectQueuePeak),
+                static_cast<unsigned long long>(idleQueuePeak), static_cast<unsigned long long>(cellQueuePeak),
+                static_cast<unsigned long long>(mapUpdater.GetPendingRequests()), static_cast<unsigned long long>(objectUpdater.GetPendingRequests()),
+                static_cast<unsigned long long>(idleUpdater.GetPendingRequests()), static_cast<unsigned long long>(cellUpdater.GetPendingRequests()),
+                static_cast<unsigned long long>(mapUpdater.GetQueuedRequests()), static_cast<unsigned long long>(objectUpdater.GetQueuedRequests()),
+                static_cast<unsigned long long>(idleUpdater.GetQueuedRequests()), static_cast<unsigned long long>(cellUpdater.GetQueuedRequests()),
+                mmap->getLoadedMapsCount(), mmap->getLoadedTilesCount(), mmap->getLoadedModelsCount(),
+                static_cast<unsigned long long>(navMapQueries), static_cast<unsigned long long>(navModelQueries),
+                static_cast<unsigned long long>(mmap->getQueryAllocationCount()), static_cast<unsigned long long>(mmap->getQueryFreeCount()),
+                static_cast<unsigned long long>(mmap->getQueryHighWater()),
+                static_cast<unsigned long long>(itemRandom), static_cast<unsigned long long>(itemEquip),
+                static_cast<unsigned long long>(itemInfo), static_cast<unsigned long long>(itemConsumable),
+                static_cast<unsigned long long>(itemTrade), static_cast<unsigned long long>(itemEnchant),
+                static_cast<unsigned long long>(travelDestinations), static_cast<unsigned long long>(travelPoints),
+                static_cast<unsigned long long>(travelFish), static_cast<unsigned long long>(travelAreaLevels),
+                static_cast<unsigned long long>(travelBadMmaps), static_cast<unsigned long long>(travelTransfers));
+
+            static bool haveMemoryBaseline = false;
+            static uint64 previousPrivateMb = 0;
+            static uint64 previousGrids = 0;
+            static uint64 previousAiObjects = 0;
+            static uint64 previousAiValues = 0;
+            static uint64 previousNavQueries = 0;
+            static uint64 previousIdleCapacity = 0;
+            static uint64 previousTravelPoints = 0;
+            if (haveMemoryBaseline)
+            {
+                sLog.outPerformance("MEMORY_GROWTH private_delta_mb=%lld grids_delta=%lld ai_objects_delta=%lld ai_values_delta=%lld nav_queries_delta=%lld idle_capacity_delta=%lld travel_points_delta=%lld",
+                    static_cast<long long>(privateMb) - static_cast<long long>(previousPrivateMb),
+                    static_cast<long long>(allocatedGrids) - static_cast<long long>(previousGrids),
+                    static_cast<long long>(aiObjects) - static_cast<long long>(previousAiObjects),
+                    static_cast<long long>(aiValues) - static_cast<long long>(previousAiValues),
+                    static_cast<long long>(navMapQueries + navModelQueries) - static_cast<long long>(previousNavQueries),
+                    static_cast<long long>(idleSchedulerCapacity) - static_cast<long long>(previousIdleCapacity),
+                    static_cast<long long>(travelPoints) - static_cast<long long>(previousTravelPoints));
+            }
+            haveMemoryBaseline = true;
+            previousPrivateMb = privateMb;
+            previousGrids = allocatedGrids;
+            previousAiObjects = aiObjects;
+            previousAiValues = aiValues;
+            previousNavQueries = navMapQueries + navModelQueries;
+            previousIdleCapacity = idleSchedulerCapacity;
+            previousTravelPoints = travelPoints;
 
             performanceWindowStart = WorldTimer::getMSTime();
             performanceWindowUpdates = 0;

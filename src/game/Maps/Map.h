@@ -418,6 +418,14 @@ class Map : public GridRefManager<NGridType>
         void CreatePlayerOnClient(Player* player);
 
         uint32 GetLoadedGridsCount();
+        uint32 GetAllocatedGridsCount() const;
+        uint32 GetPlayerCount() const { return static_cast<uint32>(m_mapRefManager.getSize()); }
+        uint32 GetActiveNonPlayerCount() const { return static_cast<uint32>(m_activeNonPlayers.size()); }
+#ifdef ENABLE_PLAYERBOTS
+        uint64 GetIdleBotSchedulerCapacity() const { return m_idleBotDueUpdates.capacity() + m_idleBotDispatchUpdates.capacity(); }
+        uint64 GetIdleBotCoreTimerEntries() const { return m_idleBotCoreDiff.size() + m_idleBotCoreTicks.size(); }
+        void GetPlayerbotAIObjectStats(uint64& aiObjects, uint64& strategies, uint64& actions, uint64& triggers, uint64& values);
+#endif
 
         Messager<Map>& GetMessager() { return m_messager; }
 
@@ -608,6 +616,11 @@ class Map : public GridRefManager<NGridType>
         std::vector<uint32> m_activeZones;
         uint32 m_activeZonesTimer;
         bool hasRealPlayers;
+        std::unordered_map<uint32, uint32> m_idleBotCoreDiff;
+        std::unordered_map<uint32, uint32> m_idleBotCoreTicks;
+        std::vector<std::pair<Player*, uint32>> m_idleBotDueUpdates;
+        std::vector<std::pair<Player*, uint32>> m_idleBotDispatchUpdates;
+        size_t m_idleBotRoundRobinCursor;
 #endif
 
         ZoneDynamicInfoMap m_zoneDynamicInfo;
