@@ -49,6 +49,7 @@
 
 #include <time.h>
 #include <cmath>
+#include <unordered_set>
 
 #ifdef ENABLE_PLAYERBOTS
 #include "playerbot/playerbot.h"
@@ -763,6 +764,27 @@ void Map::VisitNearbyCellsOf(WorldObject* obj, TypeContainerVisitor<MaNGOS::Obje
     }
 }
 
+void Map::CollectNearbyCellsOf(WorldObject* obj, std::vector<Cell>& cells)
+{
+    CellArea area = Cell::CalculateCellArea(obj->GetPositionX(), obj->GetPositionY(),
+        obj->IsInWorld() ? obj->GetVisibilityData().GetVisibilityDistance() : GetVisibilityDistance());
+
+    for (uint32 x = area.low_bound.x_coord; x <= area.high_bound.x_coord; ++x)
+    {
+        for (uint32 y = area.low_bound.y_coord; y <= area.high_bound.y_coord; ++y)
+        {
+            uint32 const cellId = (y * TOTAL_NUMBER_OF_CELLS_PER_MAP) + x;
+            if (isCellMarked(cellId))
+                continue;
+
+            markCell(cellId);
+            Cell cell(CellPair(x, y));
+            cell.SetNoCreate();
+            cells.push_back(cell);
+        }
+    }
+}
+
 void Map::Update(const uint32& t_diff)
 {
     m_clientUpdateTimer += t_diff;
@@ -778,6 +800,7 @@ void Map::Update(const uint32& t_diff)
     uint32 performanceBotCount = 0;
     uint32 performanceFullBotUpdates = 0;
     uint32 performanceMinimalBotUpdates = 0;
+    uint32 performanceSkippedMinimalBotUpdates = 0;
 
 #ifdef BUILD_METRICS
     metric::duration<std::chrono::milliseconds> meas("map.update", {
@@ -806,6 +829,8 @@ void Map::Update(const uint32& t_diff)
     MaNGOS::ObjectUpdater obj_updater(objToUpdate, t_diff);
     TypeContainerVisitor<MaNGOS::ObjectUpdater, GridTypeMapContainer  > grid_object_update(obj_updater);    // For creature
     TypeContainerVisitor<MaNGOS::ObjectUpdater, WorldTypeMapContainer > world_object_update(obj_updater);   // For pets
+    bool const parallelCellDiscovery = IsContinent() && sMapMgr.GetCellUpdater().activated();
+    std::vector<Cell> cellsToVisit;
 
     for (m_transportsIterator = m_transports.begin(); m_transportsIterator != m_transports.end();)
     {
@@ -817,6 +842,15 @@ void Map::Update(const uint32& t_diff)
     // the player iterator is stored in the map object
     // to make sure calls to Map::Remove don't invalidate it
     const uint32 performanceSessionStart = WorldTimer::getMSTime();
+#ifdef ENABLE_PLAYERBOTS
+    std::unordered_set<uint32> realPlayerActiveCells;
+    std::vector<uint32> currentActiveZones;
+    bool currentHasRealPlayers = false;
+    m_activeZonesTimer += t_diff;
+    bool const logActiveZones = m_activeZonesTimer >= 10000U;
+    if (logActiveZones)
+        m_activeZonesTimer = 0U;
+#endif
     {
 #ifdef BUILD_METRICS
         uint32 updatedSessions = 0;
@@ -835,6 +869,24 @@ void Map::Update(const uint32& t_diff)
             // Update session first
             WorldSession* pSession = player->GetSession();
             pSession->UpdateMap(t_diff);
+#ifdef ENABLE_PLAYERBOTS
+            const bool isRealPlayer = !player->GetPlayerbotAI() || player->GetPlayerbotAI()->IsRealPlayer();
+            if (isRealPlayer)
+            {
+                currentHasRealPlayers = true;
+                if (!player->isAFK() && player->isGMVisible())
+                {
+                    if (std::find(currentActiveZones.begin(), currentActiveZones.end(), player->GetZoneId()) == currentActiveZones.end())
+                        currentActiveZones.push_back(player->GetZoneId());
+
+                    CellArea const area = Cell::CalculateCellArea(player->GetPositionX(), player->GetPositionY(),
+                        player->GetVisibilityData().GetVisibilityDistance());
+                    for (uint32 x = area.low_bound.x_coord; x <= area.high_bound.x_coord; ++x)
+                        for (uint32 y = area.low_bound.y_coord; y <= area.high_bound.y_coord; ++y)
+                            realPlayerActiveCells.insert((y * TOTAL_NUMBER_OF_CELLS_PER_MAP) + x);
+                }
+            }
+#endif
 #ifdef BUILD_METRICS
             ++updatedSessions;
 #endif
@@ -848,50 +900,11 @@ void Map::Update(const uint32& t_diff)
     const uint32 performancePlayerStart = WorldTimer::getMSTime();
 
 #ifdef ENABLE_PLAYERBOTS
-    // Calculate the active zones every 10 seconds (An active zone is a zone where one or more real players are)
-    constexpr uint32 maxActiveZonesTimer = 10000U;
-    if (m_activeZonesTimer < maxActiveZonesTimer)
-    {
-        m_activeZonesTimer += t_diff;
-    }
-    else
-    {
-        m_activeZonesTimer = 0U;
-        m_activeZones.clear();
-
-        // Recalculate active zones
-        if (IsContinent() && HasRealPlayers())
-        {
-            for (m_mapRefIter = m_mapRefManager.begin(); m_mapRefIter != m_mapRefManager.end(); ++m_mapRefIter)
-            {
-                Player* plr = m_mapRefIter->getSource();
-                if (plr && plr->IsInWorld())
-                {
-                    // Only consider real players
-                    if (plr->GetPlayerbotAI() && !plr->GetPlayerbotAI()->IsRealPlayer())
-                        continue;
-
-                    // Ignore afk players
-                    if (plr->isAFK())
-                        continue;
-
-                    // Ignore gm players
-                    if (!plr->isGMVisible())
-                        continue;
-
-                    // Register an active zone when a real player is on the zone
-                    if (find(m_activeZones.begin(), m_activeZones.end(), plr->GetZoneId()) == m_activeZones.end())
-                    {
-                        m_activeZones.push_back(plr->GetZoneId());
-                    }
-                }
-            }
-        }
-    }
-
-    // Reset the has real players flag and check for it again
-    const bool hadRealPlayers = hasRealPlayers;
-    hasRealPlayers = false;
+    // A zone can contain hundreds of bots nowhere near a real client. Keep the
+    // zone list for diagnostics, but use the real client's visible cells for
+    // full-rate AI admission.
+    m_activeZones.swap(currentActiveZones);
+    hasRealPlayers = currentHasRealPlayers;
 
     uint32 activePlayers = 0;
     uint32 avgDiff = sWorld.GetAverageDiff();
@@ -899,7 +912,7 @@ void Map::Update(const uint32& t_diff)
     // Calculate the chance that the bots in this map should update based on server load and real players online
     // (default is a 10% on a avg diff of 100)
     float botUpdateChance = avgDiff * 0.1f;
-    if (!hadRealPlayers)
+    if (!currentHasRealPlayers)
     {
         // If no real players are on the map then lower the chances of updating by 300%
         botUpdateChance *= 3.0f;
@@ -907,6 +920,7 @@ void Map::Update(const uint32& t_diff)
 
     bool shouldUpdateBots = urand(0, (uint32)(botUpdateChance * 100)) < 100;
     const uint32 backgroundBotCadence = std::max<uint32>(1, static_cast<uint32>(std::ceil(botUpdateChance)));
+    std::vector<std::pair<Player*, uint32>> parallelIdleBots;
 #endif
 
     /// update players at tick
@@ -937,11 +951,19 @@ void Map::Update(const uint32& t_diff)
             }
             else
             {
-                // If there are real players in the map, check if the bot is on a zone with players
-                if (hadRealPlayers)
+                // Keep bots in the real client's visible cells responsive. Bots
+                // elsewhere in the same large zone retain their staggered
+                // background cadence instead of all becoming full-rate.
+                if (currentHasRealPlayers)
                 {
-                    // Check if the bot is in an active zone (or instance)
-                    shouldUpdateBot = IsContinent() ? HasActiveZone(plr->GetZoneId()) : true;
+                    if (IsContinent())
+                    {
+                        CellPair const center = MaNGOS::ComputeCellPair(plr->GetPositionX(), plr->GetPositionY()).normalize();
+                        uint32 const cellId = (center.y_coord * TOTAL_NUMBER_OF_CELLS_PER_MAP) + center.x_coord;
+                        shouldUpdateBot = shouldUpdateBot || realPlayerActiveCells.contains(cellId);
+                    }
+                    else
+                        shouldUpdateBot = true;
                 }
 
                 // Check for edge case reasons to force update the bot
@@ -971,7 +993,18 @@ void Map::Update(const uint32& t_diff)
 #ifdef ENABLE_PLAYERBOTS
             const bool minimalBotUpdate = !sPlayerbotAIConfig.disableBotOptimizations && !shouldUpdateBot;
             const uint32 performanceBotStart = performanceLogging && isPlayerbot ? WorldTimer::getMSTime() : 0;
-            if (sPlayerbotAIConfig.disableBotOptimizations)
+            if (minimalBotUpdate && sMapMgr.GetIdleBotUpdater().activated())
+            {
+                if (plr->GetPlayerbotAI()->AdvanceMinimalUpdateDelay(t_diff))
+                {
+                    parallelIdleBots.emplace_back(plr, t_diff);
+                    ++performanceMinimalBotUpdates;
+                }
+                else
+                    ++performanceSkippedMinimalBotUpdates;
+                continue;
+            }
+            else if (sPlayerbotAIConfig.disableBotOptimizations)
             {
                 plr->UpdateAI(t_diff, false);
             }
@@ -1002,8 +1035,28 @@ void Map::Update(const uint32& t_diff)
     }
 
 #ifdef ENABLE_PLAYERBOTS
+    if (!parallelIdleBots.empty())
+    {
+        uint32 const parallelBotStart = performanceLogging ? WorldTimer::getMSTime() : 0;
+        MapUpdater& updater = sMapMgr.GetIdleBotUpdater();
+        MapUpdateTaskGroup taskGroup;
+        size_t const chunkSize = sWorld.getConfig(CONFIG_UINT32_MAP_IDLE_BOT_CHUNK_SIZE);
+        for (size_t offset = 0; offset < parallelIdleBots.size(); offset += chunkSize)
+        {
+            size_t const end = std::min(parallelIdleBots.size(), offset + chunkSize);
+            std::vector<std::pair<Player*, uint32>> chunk(parallelIdleBots.begin() + offset, parallelIdleBots.begin() + end);
+            taskGroup.Add();
+            updater.schedule_update(new IdleBotAIUpdateWorker(std::move(chunk), taskGroup, updater));
+        }
+        taskGroup.Wait();
+        if (performanceLogging)
+            performanceBotElapsed += WorldTimer::getMSTimeDiff(parallelBotStart, WorldTimer::getMSTime());
+    }
+#endif
+
+#ifdef ENABLE_PLAYERBOTS
     // Log the active zones and characters
-    if (IsContinent() && HasRealPlayers() && HasActiveZones() && m_activeZonesTimer == 0U)
+    if (logActiveZones && IsContinent() && HasRealPlayers() && HasActiveZones())
     {
         sLog.outBasic("Map %u: Active Zones - %lu", GetId(), m_activeZones.size());
         sLog.outBasic("Map %u: Active Zone Players - %u of %u", GetId(), activePlayers, m_mapRefManager.getSize());
@@ -1040,11 +1093,19 @@ void Map::Update(const uint32& t_diff)
         }
 #endif
 
-        VisitNearbyCellsOf(player, grid_object_update, world_object_update);
+        if (parallelCellDiscovery)
+            CollectNearbyCellsOf(player, cellsToVisit);
+        else
+            VisitNearbyCellsOf(player, grid_object_update, world_object_update);
 
         // If player is using far sight, visit that object too
         if (WorldObject* viewPoint = GetWorldObject(player->GetFarSightGuid()))
-            VisitNearbyCellsOf(viewPoint, grid_object_update, world_object_update);
+        {
+            if (parallelCellDiscovery)
+                CollectNearbyCellsOf(viewPoint, cellsToVisit);
+            else
+                VisitNearbyCellsOf(viewPoint, grid_object_update, world_object_update);
+        }
     }
 
 #ifdef ENABLE_PLAYERBOTS
@@ -1079,8 +1140,10 @@ void Map::Update(const uint32& t_diff)
             // Skip objects on locations away from real players if world is laggy
             if (!sPlayerbotAIConfig.disableBotOptimizations && IsContinent() && avgDiff > 100)
             {
-                const bool isInActiveZone = IsContinent() ? HasActiveZone(obj->GetZoneId()) : HasRealPlayers();
-                if (!isInActiveZone && !shouldUpdateObjects)
+                CellPair const center = MaNGOS::ComputeCellPair(obj->GetPositionX(), obj->GetPositionY()).normalize();
+                uint32 const cellId = (center.y_coord * TOTAL_NUMBER_OF_CELLS_PER_MAP) + center.x_coord;
+                bool const isNearRealPlayer = realPlayerActiveCells.contains(cellId);
+                if (!isNearRealPlayer && !shouldUpdateObjects)
                 {
                     continue;
                 }
@@ -1105,8 +1168,13 @@ void Map::Update(const uint32& t_diff)
                         CellPair pair(x, y);
                         Cell cell(pair);
                         cell.SetNoCreate();
-                        Visit(cell, grid_object_update);
-                        Visit(cell, world_object_update);
+                        if (parallelCellDiscovery)
+                            cellsToVisit.push_back(cell);
+                        else
+                        {
+                            Visit(cell, grid_object_update);
+                            Visit(cell, world_object_update);
+                        }
                     }
                 }
             }
@@ -1122,8 +1190,13 @@ void Map::Update(const uint32& t_diff)
         {
             markCell(cell_id);
             cell.SetNoCreate();
-            Visit(cell, grid_object_update);
-            Visit(cell, world_object_update);
+            if (parallelCellDiscovery)
+                cellsToVisit.push_back(cell);
+            else
+            {
+                Visit(cell, grid_object_update);
+                Visit(cell, world_object_update);
+            }
         }
     };
 
@@ -1152,6 +1225,28 @@ void Map::Update(const uint32& t_diff)
                 visitHomeCell(waypointNpc);
             }
         }
+    }
+
+    if (parallelCellDiscovery && !cellsToVisit.empty())
+    {
+        MapUpdater& updater = sMapMgr.GetCellUpdater();
+        size_t const chunkSize = sWorld.getConfig(CONFIG_UINT32_MAP_CELL_CHUNK_SIZE);
+        std::vector<std::unique_ptr<WorldObjectUnSet>> workerObjects;
+        workerObjects.reserve((cellsToVisit.size() + chunkSize - 1) / chunkSize);
+        MapUpdateTaskGroup taskGroup;
+
+        for (size_t offset = 0; offset < cellsToVisit.size(); offset += chunkSize)
+        {
+            size_t const end = std::min(cellsToVisit.size(), offset + chunkSize);
+            std::vector<Cell> chunk(cellsToVisit.begin() + offset, cellsToVisit.begin() + end);
+            workerObjects.emplace_back(std::make_unique<WorldObjectUnSet>());
+            taskGroup.Add();
+            updater.schedule_update(new GridCrawler(*this, std::move(chunk), *workerObjects.back(), t_diff, taskGroup, updater));
+        }
+
+        taskGroup.Wait();
+        for (auto const& objects : workerObjects)
+            objToUpdate.insert(objects->begin(), objects->end());
     }
 
     uint64 count = PerformObjectUpdate(t_diff, objToUpdate);
@@ -1208,10 +1303,21 @@ void Map::Update(const uint32& t_diff)
         const uint32 slowBotThreshold = sWorld.getConfig(CONFIG_UINT32_PERFORMANCE_LOG_SLOW_BOT_MS);
         if (performanceTotalElapsed >= slowMapThreshold || performanceBotElapsed >= slowBotThreshold)
         {
-            sLog.outPerformance("SLOW_MAP map=%u instance=%u name=%s total=%u ms sessions=%u ms players_phase=%u ms bot_ai=%u ms players=%u bots=%u bot_full=%u bot_minimal=%u objects=%llu input_diff=%u ms",
-                GetId(), GetInstanceId(), GetMapName(), performanceTotalElapsed, performanceSessionElapsed,
-                performancePlayerElapsed, performanceBotElapsed, performancePlayerCount, performanceBotCount,
-                performanceFullBotUpdates, performanceMinimalBotUpdates, static_cast<unsigned long long>(count), t_diff);
+            ++m_SuppressedSlowMapDetails;
+            m_PeakSuppressedSlowMapMs = std::max(m_PeakSuppressedSlowMapMs, performanceTotalElapsed);
+            uint32 const detailInterval = sWorld.getConfig(CONFIG_UINT32_PERFORMANCE_LOG_DETAIL_INTERVAL_MS);
+            uint32 const now = WorldTimer::getMSTime();
+            if (!m_LastSlowMapDetailMs || WorldTimer::getMSTimeDiff(m_LastSlowMapDetailMs, now) >= detailInterval)
+            {
+                sLog.outPerformance("SLOW_MAP map=%u instance=%u name=%s total=%u ms peak=%u ms samples=%u sessions=%u ms players_phase=%u ms bot_ai=%u ms players=%u bots=%u bot_full=%u bot_minimal=%u bot_minimal_skipped=%u objects=%llu input_diff=%u ms",
+                    GetId(), GetInstanceId(), GetMapName(), performanceTotalElapsed, m_PeakSuppressedSlowMapMs,
+                    m_SuppressedSlowMapDetails, performanceSessionElapsed, performancePlayerElapsed, performanceBotElapsed,
+                    performancePlayerCount, performanceBotCount, performanceFullBotUpdates, performanceMinimalBotUpdates,
+                    performanceSkippedMinimalBotUpdates, static_cast<unsigned long long>(count), t_diff);
+                m_LastSlowMapDetailMs = now;
+                m_SuppressedSlowMapDetails = 0;
+                m_PeakSuppressedSlowMapMs = 0;
+            }
         }
     }
 }
@@ -2837,7 +2943,7 @@ void Map::SendObjectUpdates()
     if (IsContinent() && updater.activated() && objectsToUpdate.size() >= chunkSize)
     {
         size_t const chunkCount = (objectsToUpdate.size() + chunkSize - 1) / chunkSize;
-        parallelUpdates.reserve(chunkCount);
+        MapUpdateTaskGroup taskGroup;
 
         std::vector<Object*> chunk;
         chunk.reserve(chunkSize);
@@ -2847,7 +2953,8 @@ void Map::SendObjectUpdates()
             if (chunk.size() == chunkSize)
             {
                 parallelUpdates.emplace_back(std::make_unique<UpdateDataMapType>());
-                updater.schedule_update(new ObjectUpdateBuildWorker(std::move(chunk), *parallelUpdates.back(), updater));
+                taskGroup.Add();
+                updater.schedule_update(new ObjectUpdateBuildWorker(std::move(chunk), *parallelUpdates.back(), taskGroup, updater));
                 chunk.clear();
                 chunk.reserve(chunkSize);
             }
@@ -2856,10 +2963,11 @@ void Map::SendObjectUpdates()
         if (!chunk.empty())
         {
             parallelUpdates.emplace_back(std::make_unique<UpdateDataMapType>());
-            updater.schedule_update(new ObjectUpdateBuildWorker(std::move(chunk), *parallelUpdates.back(), updater));
+            taskGroup.Add();
+            updater.schedule_update(new ObjectUpdateBuildWorker(std::move(chunk), *parallelUpdates.back(), taskGroup, updater));
         }
 
-        updater.wait();
+        taskGroup.Wait();
     }
     else
         for (Object* object : objectsToUpdate)

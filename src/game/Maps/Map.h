@@ -159,6 +159,7 @@ class Map : public GridRefManager<NGridType>
         static void DeleteFromWorld(Player* pl);        // player object will deleted at call
 
         void VisitNearbyCellsOf(WorldObject* obj, TypeContainerVisitor<MaNGOS::ObjectUpdater, GridTypeMapContainer> &gridVisitor, TypeContainerVisitor<MaNGOS::ObjectUpdater, WorldTypeMapContainer> &worldVisitor);
+        void CollectNearbyCellsOf(WorldObject* obj, std::vector<Cell>& cells);
         virtual void Update(const uint32&);
 
         uint64 PerformObjectUpdate(uint32 t_diff, WorldObjectUnSet& objToUpdate);
@@ -514,6 +515,9 @@ class Map : public GridRefManager<NGridType>
         uint32 m_clientUpdateTick;
         float m_VisibleDistance;
         float m_BaseVisibleDistance;
+        uint32 m_LastSlowMapDetailMs = 0;
+        uint32 m_SuppressedSlowMapDetails = 0;
+        uint32 m_PeakSuppressedSlowMapMs = 0;
         MapPersistentState* m_persistentState;
 
         MapRefManager m_mapRefManager;

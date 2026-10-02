@@ -633,6 +633,10 @@ void World::LoadConfigSettings(bool reload)
     setConfig(CONFIG_UINT32_NUM_MAP_THREADS, "MapUpdate.Threads", 3);
     setConfigMin(CONFIG_UINT32_MAP_OBJECT_THREADS, "MapUpdate.ObjectThreads", 1, 1);
     setConfigMin(CONFIG_UINT32_MAP_VISIBILITY_CHUNK_SIZE, "MapUpdate.VisibilityChunkSize", 64, 8);
+    setConfig(CONFIG_UINT32_MAP_IDLE_BOT_THREADS, "MapUpdate.IdleBotThreads", 2);
+    setConfigMin(CONFIG_UINT32_MAP_IDLE_BOT_CHUNK_SIZE, "MapUpdate.IdleBotChunkSize", 64, 8);
+    setConfig(CONFIG_UINT32_MAP_CELL_THREADS, "MapUpdate.CellThreads", 2);
+    setConfigMin(CONFIG_UINT32_MAP_CELL_CHUNK_SIZE, "MapUpdate.CellChunkSize", 64, 8);
     setConfig(CONFIG_BOOL_PERFORMANCE_LOG_ENABLED, "PerformanceLog.Enabled", true);
     setConfigMin(CONFIG_UINT32_PERFORMANCE_LOG_SLOW_WORLD_MS, "PerformanceLog.SlowWorldUpdateMs", 200, 1);
     setConfigMin(CONFIG_UINT32_PERFORMANCE_LOG_SLOW_MAP_MS, "PerformanceLog.SlowMapUpdateMs", 100, 1);
@@ -642,6 +646,7 @@ void World::LoadConfigSettings(bool reload)
     setConfigMin(CONFIG_UINT32_PERFORMANCE_LOG_SLOW_ASYNC_DB_MS, "PerformanceLog.SlowAsyncDbMs", 100, 1);
     setConfigMin(CONFIG_UINT32_PERFORMANCE_LOG_SLOW_DB_CALLBACK_MS, "PerformanceLog.SlowDbCallbackMs", 50, 1);
     setConfigMin(CONFIG_UINT32_PERFORMANCE_LOG_SUMMARY_INTERVAL_MS, "PerformanceLog.SummaryIntervalMs", 60000, 1000);
+    setConfigMin(CONFIG_UINT32_PERFORMANCE_LOG_DETAIL_INTERVAL_MS, "PerformanceLog.DetailIntervalMs", 1000, 100);
     setConfig(CONFIG_BOOL_PLAYERBOT_STAGGER_BACKGROUND_UPDATES, "Playerbot.StaggerBackgroundUpdates", true);
     setConfig(CONFIG_BOOL_ADAPTIVE_LOAD_ENABLED, "AdaptiveLoad.Enabled", true);
     setConfigMin(CONFIG_UINT32_ADAPTIVE_LOAD_EMPTY_MAP_UPDATE_MS, "AdaptiveLoad.EmptyMapUpdateMs", 500, getConfig(CONFIG_UINT32_INTERVAL_MAPUPDATE));
@@ -1879,6 +1884,9 @@ void World::Update(uint32 diff)
         static uint64 performanceWindowMaps = 0;
         static uint32 performanceWindowMaximum = 0;
         static uint32 performanceWindowSlowUpdates = 0;
+        static uint32 lastSlowWorldDetailMs = 0;
+        static uint32 suppressedSlowWorldDetails = 0;
+        static uint32 peakSuppressedSlowWorldMs = 0;
 
         if (!performanceWindowStart)
             performanceWindowStart = performanceWorldStart;
@@ -1893,22 +1901,47 @@ void World::Update(uint32 diff)
         if (performanceTotalElapsed >= slowWorldThreshold)
         {
             ++performanceWindowSlowUpdates;
-            sLog.outPerformance("SLOW_WORLD loop=%u total=%u ms input_diff=%u ms bots=%u ms sessions=%u ms maps=%u ms other=%u ms sessions_online=%u",
-                m_worldLoopCounter.load(std::memory_order_relaxed), performanceTotalElapsed, diff, performanceBotElapsed,
-                performanceSessionElapsed, performanceMapElapsed, performanceOtherElapsed, static_cast<uint32>(GetActiveSessionCount()));
+            ++suppressedSlowWorldDetails;
+            peakSuppressedSlowWorldMs = std::max(peakSuppressedSlowWorldMs, performanceTotalElapsed);
+            uint32 const now = WorldTimer::getMSTime();
+            if (!lastSlowWorldDetailMs || WorldTimer::getMSTimeDiff(lastSlowWorldDetailMs, now) >= getConfig(CONFIG_UINT32_PERFORMANCE_LOG_DETAIL_INTERVAL_MS))
+            {
+                sLog.outPerformance("SLOW_WORLD loop=%u total=%u ms peak=%u ms samples=%u input_diff=%u ms bots=%u ms sessions=%u ms maps=%u ms other=%u ms sessions_online=%u",
+                    m_worldLoopCounter.load(std::memory_order_relaxed), performanceTotalElapsed, peakSuppressedSlowWorldMs,
+                    suppressedSlowWorldDetails, diff, performanceBotElapsed, performanceSessionElapsed, performanceMapElapsed,
+                    performanceOtherElapsed, static_cast<uint32>(GetActiveSessionCount()));
+                lastSlowWorldDetailMs = now;
+                suppressedSlowWorldDetails = 0;
+                peakSuppressedSlowWorldMs = 0;
+            }
         }
 
         const uint32 performanceWindowElapsed = WorldTimer::getMSTimeDiff(performanceWindowStart, WorldTimer::getMSTime());
         if (performanceWindowElapsed >= getConfig(CONFIG_UINT32_PERFORMANCE_LOG_SUMMARY_INTERVAL_MS))
         {
             const uint64 updateCount = std::max<uint64>(1, performanceWindowUpdates);
-            sLog.outPerformance("WORLD_SUMMARY window=%u ms updates=%llu avg=%llu ms max=%u ms slow=%u avg_bots=%llu ms avg_sessions=%llu ms avg_maps=%llu ms sessions_online=%u map_threads=%u",
+            uint64 workingSetMb = 0;
+            uint64 privateMb = 0;
+            GetProcessMemoryMegabytes(workingSetMb, privateMb);
+            uint32 const pendingCallbacks = static_cast<uint32>(CharacterDatabase.GetPendingResultCount() +
+                WorldDatabase.GetPendingResultCount() + LoginDatabase.GetPendingResultCount());
+            uint32 const pendingDbOperations = static_cast<uint32>(CharacterDatabase.GetPendingAsyncOperationCount() +
+                WorldDatabase.GetPendingAsyncOperationCount() + LoginDatabase.GetPendingAsyncOperationCount() +
+                LogsDatabase.GetPendingAsyncOperationCount());
+            uint32 botsOnline = 0;
+#ifdef ENABLE_PLAYERBOTS
+            botsOnline = sRandomPlayerbotMgr.GetPlayerbotsAmount();
+#endif
+            sLog.outPerformance("WORLD_SUMMARY window=%u ms updates=%llu avg=%llu ms max=%u ms slow=%u avg_bots=%llu ms avg_sessions=%llu ms avg_maps=%llu ms sessions_online=%u bots_online=%u maps=%u map_threads=%u target_tick_ms=%u working_set_mb=%llu private_mb=%llu db_callbacks=%u db_operations=%u",
                 performanceWindowElapsed, static_cast<unsigned long long>(performanceWindowUpdates),
                 static_cast<unsigned long long>(performanceWindowTotal / updateCount), performanceWindowMaximum,
                 performanceWindowSlowUpdates, static_cast<unsigned long long>(performanceWindowBots / updateCount),
                 static_cast<unsigned long long>(performanceWindowSessions / updateCount),
                 static_cast<unsigned long long>(performanceWindowMaps / updateCount), static_cast<uint32>(GetActiveSessionCount()),
-                getConfig(CONFIG_UINT32_NUM_MAP_THREADS));
+                botsOnline, static_cast<uint32>(sMapMgr.Maps().size()), getConfig(CONFIG_UINT32_NUM_MAP_THREADS),
+                getConfig(CONFIG_UINT32_INTERVAL_MAPUPDATE),
+                static_cast<unsigned long long>(workingSetMb), static_cast<unsigned long long>(privateMb),
+                pendingCallbacks, pendingDbOperations);
 
             performanceWindowStart = WorldTimer::getMSTime();
             performanceWindowUpdates = 0;
