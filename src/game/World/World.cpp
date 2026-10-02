@@ -68,7 +68,6 @@
 #include "Maps/TransportMgr.h"
 #include "Anticheat/Anticheat.hpp"
 #include "Spells/SpellStacking.h"
-#include "revision_sql.h"
 
 #ifdef BUILD_AHBOT
  #include "AuctionHouseBot/AuctionHouseBot.h"
@@ -668,10 +667,6 @@ void World::LoadConfigSettings(bool reload)
     setConfig(CONFIG_UINT32_MAP_IDLE_BOT_JITTER_MS, "MapUpdate.IdleBotJitterMs", 4000);
     setConfig(CONFIG_UINT32_MAP_CELL_THREADS, "MapUpdate.CellThreads", 2);
     setConfigMin(CONFIG_UINT32_MAP_CELL_CHUNK_SIZE, "MapUpdate.CellChunkSize", 64, 8);
-    setConfigMin(CONFIG_UINT32_MAP_CELL_MIN_PARALLEL_CELLS, "MapUpdate.CellMinParallelCells", 128, 1);
-    setConfigMin(CONFIG_UINT32_MAP_CELL_MAX_CHUNKS_PER_MAP, "MapUpdate.CellMaxChunksPerMap", 8, 1);
-    setConfigMin(CONFIG_UINT32_MAP_CELL_MAX_WAIT_MS, "MapUpdate.CellMaxWaitMs", 75, 1);
-    setConfigMin(CONFIG_UINT32_MAP_CELL_FALLBACK_SECONDS, "MapUpdate.CellFallbackSeconds", 30, 1);
     setConfig(CONFIG_BOOL_PERFORMANCE_LOG_ENABLED, "PerformanceLog.Enabled", true);
     setConfigMin(CONFIG_UINT32_PERFORMANCE_LOG_SLOW_WORLD_MS, "PerformanceLog.SlowWorldUpdateMs", 200, 1);
     setConfigMin(CONFIG_UINT32_PERFORMANCE_LOG_SLOW_MAP_MS, "PerformanceLog.SlowMapUpdateMs", 100, 1);
@@ -689,36 +684,6 @@ void World::LoadConfigSettings(bool reload)
     setConfigMin(CONFIG_UINT32_ADAPTIVE_LOAD_RECOVER_WORLD_MS, "AdaptiveLoad.RecoverWorldMs", 120, 1);
     setConfigMinMax(CONFIG_UINT32_ADAPTIVE_LOAD_MIN_VISIBILITY_PERCENT, "AdaptiveLoad.MinVisibilityPercent", 70, 25, 100);
     setConfigMinMax(CONFIG_UINT32_ADAPTIVE_LOAD_VISIBILITY_STEP_PERCENT, "AdaptiveLoad.VisibilityStepPercent", 5, 1, 25);
-    setConfigMin(CONFIG_UINT32_ADAPTIVE_LOAD_BOT_BUDGET_MS, "AdaptiveLoad.BotBudgetMs", 20, 1);
-    setConfigMin(CONFIG_UINT32_ADAPTIVE_LOAD_BACKGROUND_BOT_MIN_UPDATES, "AdaptiveLoad.BackgroundBotMinUpdates", 16, 1);
-    setConfigMin(CONFIG_UINT32_ADAPTIVE_LOAD_BACKGROUND_BOT_MAX_DEFERRAL_MS, "AdaptiveLoad.BackgroundBotMaxDeferralMs", 15000, 1000);
-    setConfigMin(CONFIG_UINT32_ADAPTIVE_LOAD_BOT_RECOVERY_TICKS, "AdaptiveLoad.BotRecoveryTicks", 20, 1);
-    setConfig(CONFIG_UINT32_ADAPTIVE_LOAD_MEMORY_SOFT_MB, "AdaptiveLoad.MemorySoftMB", 0);
-    setConfig(CONFIG_UINT32_ADAPTIVE_LOAD_MEMORY_HARD_MB, "AdaptiveLoad.MemoryHardMB", 0);
-    setConfig(CONFIG_UINT32_ADAPTIVE_LOAD_MEMORY_RECOVER_MB, "AdaptiveLoad.MemoryRecoverMB", 0);
-    uint32 memorySoftMb = getConfig(CONFIG_UINT32_ADAPTIVE_LOAD_MEMORY_SOFT_MB);
-    uint32 memoryHardMb = getConfig(CONFIG_UINT32_ADAPTIVE_LOAD_MEMORY_HARD_MB);
-    uint32 memoryRecoverMb = getConfig(CONFIG_UINT32_ADAPTIVE_LOAD_MEMORY_RECOVER_MB);
-    if (memorySoftMb && memoryHardMb && memoryHardMb <= memorySoftMb)
-    {
-        memoryHardMb = memorySoftMb + std::max<uint32>(256, memorySoftMb / 10);
-        setConfig(CONFIG_UINT32_ADAPTIVE_LOAD_MEMORY_HARD_MB, memoryHardMb);
-        sLog.outError("AdaptiveLoad.MemoryHardMB must exceed MemorySoftMB; adjusted to %u MB.", memoryHardMb);
-    }
-    if (!memorySoftMb && memoryRecoverMb)
-    {
-        memoryRecoverMb = 0;
-        setConfig(CONFIG_UINT32_ADAPTIVE_LOAD_MEMORY_RECOVER_MB, 0);
-        sLog.outError("AdaptiveLoad.MemoryRecoverMB requires MemorySoftMB; recovery threshold disabled.");
-    }
-    else if (memorySoftMb && (!memoryRecoverMb || memoryRecoverMb >= memorySoftMb))
-    {
-        memoryRecoverMb = std::max<uint32>(1, memorySoftMb * 9 / 10);
-        setConfig(CONFIG_UINT32_ADAPTIVE_LOAD_MEMORY_RECOVER_MB, memoryRecoverMb);
-        sLog.outError("AdaptiveLoad.MemoryRecoverMB must be below MemorySoftMB; adjusted to %u MB.", memoryRecoverMb);
-    }
-    sLog.outString("Arch3 memory guard: soft=%u MB hard=%u MB recover=%u MB",
-        memorySoftMb, memoryHardMb, memoryRecoverMb);
     setConfig(CONFIG_BOOL_MOVEMENT_COMPRESSION_ENABLED, "MovementCompression.Enabled", true);
     setConfigMin(CONFIG_UINT32_MOVEMENT_COMPRESSION_MIN_PACKETS, "MovementCompression.MinPackets", 3, 2);
     setConfigMin(CONFIG_UINT32_MOVEMENT_BROADCAST_THREADS, "MovementBroadcast.Threads", 1, 1);
@@ -2078,7 +2043,7 @@ void World::Update(uint32 diff)
                     static_cast<unsigned long long>(transitionRequests),
                     static_cast<unsigned long long>(transitionWorkDiscarded));
             }
-
+            
             sLog.outPerformance("MEMORY_SUMMARY working_set_mb=%llu private_mb=%llu maps=%u grids_allocated=%llu grids_active=%llu map_players=%llu active_nonplayers=%llu ai_objects=%llu ai_strategies=%llu ai_actions=%llu ai_triggers=%llu ai_values=%llu ai_values_released=%llu idle_scheduler_capacity=%llu idle_core_timer_entries=%llu queue_map_peak=%llu queue_object_peak=%llu queue_idle_peak=%llu queue_cell_peak=%llu queue_map_pending=%llu queue_object_pending=%llu queue_idle_pending=%llu queue_cell_pending=%llu queue_map_queued=%llu queue_object_queued=%llu queue_idle_queued=%llu queue_cell_queued=%llu nav_maps=%u nav_tiles=%u nav_models=%u nav_map_thread_queries=%llu nav_model_thread_queries=%llu nav_query_allocations=%llu nav_query_frees=%llu nav_query_highwater=%llu item_random=%llu item_equip=%llu item_info=%llu item_consumable=%llu item_trade=%llu item_enchant=%llu travel_destinations=%llu travel_points=%llu travel_fish=%llu travel_area_levels=%llu travel_bad_mmaps=%llu travel_transfers=%llu",
                 static_cast<unsigned long long>(workingSetMb), static_cast<unsigned long long>(privateMb), static_cast<uint32>(sMapMgr.Maps().size()),
                 static_cast<unsigned long long>(allocatedGrids), static_cast<unsigned long long>(activeGrids),
