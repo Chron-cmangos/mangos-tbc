@@ -1025,10 +1025,44 @@ void Map::Update(const uint32& t_diff)
                 activePlayers++;
             }
 #endif
-            plr->Update(t_diff);
 
 #ifdef ENABLE_PLAYERBOTS
             const bool minimalBotUpdate = !sPlayerbotAIConfig.disableBotOptimizations && !shouldUpdateBot;
+            uint32 coreUpdateDiff = t_diff;
+            bool runCoreUpdate = true;
+            if (isPlayerbot)
+            {
+                uint32 const idleCoreCadence = sWorld.getConfig(CONFIG_UINT32_PLAYERBOT_IDLE_CORE_UPDATE_SKIP);
+                uint32 const guid = plr->GetGUIDLow();
+                if (minimalBotUpdate && idleCoreCadence > 1)
+                {
+                    m_idleBotCoreDiff[guid] += t_diff;
+                    uint32& ticks = m_idleBotCoreTicks[guid];
+                    ++ticks;
+                    if (ticks < idleCoreCadence)
+                        runCoreUpdate = false;
+                    else
+                    {
+                        coreUpdateDiff = m_idleBotCoreDiff[guid];
+                        m_idleBotCoreDiff.erase(guid);
+                        m_idleBotCoreTicks.erase(guid);
+                    }
+                }
+                else
+                {
+                    auto accumulated = m_idleBotCoreDiff.find(guid);
+                    if (accumulated != m_idleBotCoreDiff.end())
+                    {
+                        coreUpdateDiff += accumulated->second;
+                        m_idleBotCoreDiff.erase(accumulated);
+                        m_idleBotCoreTicks.erase(guid);
+                    }
+                }
+            }
+
+            if (runCoreUpdate)
+                plr->Update(coreUpdateDiff);
+
             const uint32 performanceBotStart = performanceLogging && isPlayerbot ? WorldTimer::getMSTime() : 0;
             if (minimalBotUpdate && sMapMgr.GetIdleBotUpdater().activated())
             {
@@ -1066,6 +1100,8 @@ void Map::Update(const uint32& t_diff)
                         plr->GetPlayerbotAI()->HasRealPlayerMaster() ? 1 : 0);
                 }
             }
+#else
+            plr->Update(t_diff);
 #endif
         }
     }

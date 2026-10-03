@@ -94,6 +94,30 @@
 #include <cstdarg>
 #include <memory>
 
+#ifdef _WIN32
+#include <windows.h>
+#include <psapi.h>
+#pragma comment(lib, "Psapi.lib")
+#endif
+
+namespace
+{
+    void GetProcessMemoryMegabytes(uint64& workingSetMb, uint64& privateMb)
+    {
+        workingSetMb = 0;
+        privateMb = 0;
+#ifdef _WIN32
+        PROCESS_MEMORY_COUNTERS_EX counters{};
+        counters.cb = sizeof(counters);
+        if (GetProcessMemoryInfo(GetCurrentProcess(), reinterpret_cast<PROCESS_MEMORY_COUNTERS*>(&counters), sizeof(counters)))
+        {
+            workingSetMb = counters.WorkingSetSize / (1024ULL * 1024ULL);
+            privateMb = counters.PrivateUsage / (1024ULL * 1024ULL);
+        }
+#endif
+    }
+}
+
 INSTANTIATE_SINGLETON_1(World);
 
 extern void LoadGameObjectModelList();
@@ -663,6 +687,9 @@ void World::LoadConfigSettings(bool reload)
     setConfigMin(CONFIG_UINT32_MOVEMENT_COMPRESSION_MIN_PACKETS, "MovementCompression.MinPackets", 3, 2);
     setConfigMin(CONFIG_UINT32_MOVEMENT_BROADCAST_THREADS, "MovementBroadcast.Threads", 1, 1);
     setConfigMin(CONFIG_UINT32_MOVEMENT_BROADCAST_MAX_QUEUED_BATCHES, "MovementBroadcast.MaxQueuedBatches", 32768, 128);
+    setConfigMin(CONFIG_UINT32_DATABASE_CALLBACK_BUDGET_MS, "Database.CallbackBudgetMs", 5, 1);
+    setConfig(CONFIG_UINT32_LOGIN_BOT_SESSIONS_PER_TICK, "Login.BotSessionsPerTick", 100);
+    setConfig(CONFIG_UINT32_PLAYERBOT_IDLE_CORE_UPDATE_SKIP, "Playerbot.IdleCoreUpdateSkip", 4);
     setConfig(CONFIG_FLOAT_DYN_RESPAWN_CHECK_RANGE, "DynamicRespawn.Range", -1.0f);
     setConfig(CONFIG_FLOAT_DYN_RESPAWN_MAX_REDUCTION_RATE, "DynamicRespawn.MaxReductionRate", 0.0f);
     setConfig(CONFIG_FLOAT_DYN_RESPAWN_PERCENT_PER_PLAYER, "DynamicRespawn.PercentPerPlayer", 0.0f);
@@ -2527,8 +2554,28 @@ void World::UpdateSessions(uint32 diff)
             std::swap(m_sessionAddQueue, sessionQueueCopy);
         }
 
-        for (auto const& session : sessionQueueCopy)
+        std::deque<WorldSession*> deferredBots;
+        uint32 const botLimit = getConfig(CONFIG_UINT32_LOGIN_BOT_SESSIONS_PER_TICK);
+        uint32 botsAdded = 0;
+        for (WorldSession* session : sessionQueueCopy)
+        {
+#ifdef ENABLE_PLAYERBOTS
+            if (!session->HasClientSocket() && botLimit && botsAdded >= botLimit)
+            {
+                deferredBots.push_back(session);
+                continue;
+            }
+            if (!session->HasClientSocket())
+                ++botsAdded;
+#endif
             AddSession_(session);
+        }
+
+        if (!deferredBots.empty())
+        {
+            std::lock_guard<std::mutex> guard(m_sessionAddQueueLock);
+            m_sessionAddQueue.insert(m_sessionAddQueue.begin(), deferredBots.begin(), deferredBots.end());
+        }
     }
 
     ///- Then send an update signal to remaining ones
@@ -2577,9 +2624,10 @@ void World::InitResultQueue()
 void World::UpdateResultQueue()
 {
     // process async result queues
-    CharacterDatabase.ProcessResultQueue();
-    WorldDatabase.ProcessResultQueue();
-    LoginDatabase.ProcessResultQueue();
+    uint32 const budget = getConfig(CONFIG_UINT32_DATABASE_CALLBACK_BUDGET_MS);
+    CharacterDatabase.ProcessResultQueue(budget);
+    WorldDatabase.ProcessResultQueue(budget);
+    LoginDatabase.ProcessResultQueue(budget);
 }
 
 void World::UpdateRealmCharCount(uint32 accountId)
