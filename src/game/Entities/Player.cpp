@@ -21519,18 +21519,20 @@ void Player::learnClassLevelSpells(bool includeHighLevelQuestRewards)
 
                     if (learnedSpell)
                     {
-                        bool learned = false;
+                        bool hasLearnEffect = false;
                         for (int j = 0; j < 3; ++j)
                         {
                             if (proto->Effect[j] == SPELL_EFFECT_LEARN_SPELL)
                             {
+                                hasLearnEffect = true;
                                 uint32 learnedSpell2 = proto->EffectTriggerSpell[j];
+                                if (!learnedSpell2 || !sSpellTemplate.LookupEntry<SpellEntry>(learnedSpell2))
+                                    continue;
                                 learnSpell(learnedSpell2, false);
-                                learned = true;
                             }
                         }
 
-                        if (!learned)
+                        if (!hasLearnEffect)
                         {
                             learnSpell(learnedSpell, false);
                         }

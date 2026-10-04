@@ -42,6 +42,7 @@
 #endif
 
 #include <cassert>
+#include <cmath>
 
 namespace
 {
@@ -577,18 +578,19 @@ void MotionMaster::MoveCharge(Unit& target, float speed, uint32 id/* = EVENT_CHA
 bool MotionMaster::MoveFall(ObjectGuid guid/* = ObjectGuid()*/, uint32 relayId/* = 0*/)
 {
     const float x = m_owner->GetPositionX(), y = m_owner->GetPositionY(), z = m_owner->GetPositionZ();
+    if (!std::isfinite(x) || !std::isfinite(y) || !std::isfinite(z)) return false;
 
     // use larger distance for vmap height search than in most other cases
     float tz = m_owner->GetMap()->GetHeight(x, y, z);
 
-    if (tz <= INVALID_HEIGHT)
+    if (!std::isfinite(tz) || tz <= INVALID_HEIGHT)
     {
         DEBUG_LOG("MotionMaster::MoveFall: unable retrive a proper height at map %u (x: %f, y: %f, z: %f).", m_owner->GetMap()->GetId(), x, y, z);
         return false;
     }
 
-    // Abort too if the ground is very near
-    if (fabs(z - tz) < g_moveFallMinFallDistance)
+    // A detected surface above the unit is not a falling destination.
+    if (z - tz < g_moveFallMinFallDistance)
         return false;
 
     Movement::MoveSplineInit init(*m_owner);
