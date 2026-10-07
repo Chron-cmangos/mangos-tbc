@@ -16,6 +16,7 @@
  * Foundation, Inc., 59 Temple Place, Suite 330, Boston, MA  02111-1307  USA
  */
 
+#include "Memory/EntityLedger.h"
 #include "Common.h"
 #include "Database/DatabaseEnv.h"
 #include "Server/WorldPacket.h"
@@ -333,6 +334,7 @@ Aura::Aura(SpellEntry const* spellproto, SpellEffectIndex eff, int32 const* curr
     m_isPersistent(false), m_magnetUsed(false), m_spellAuraHolder(holder),
     m_scriptValue(0), m_storage(nullptr), m_affectOverriden(false), m_scriptRef(this, NoopAuraDeleter())
 {
+    ManTech::EntityLedger::Add(ManTech::EntityKind::AuraEffects);
     MANGOS_ASSERT(target);
     MANGOS_ASSERT(spellproto && spellproto == sSpellTemplate.LookupEntry<SpellEntry>(spellproto->Id) && "`info` must be pointer to sSpellTemplate element");
 
@@ -396,6 +398,7 @@ Aura::Aura(SpellEntry const* spellproto, SpellEffectIndex eff, int32 const* curr
 
 Aura::~Aura()
 {
+    ManTech::EntityLedger::Remove(ManTech::EntityKind::AuraEffects);
     delete m_storage;
     delete m_spellmod;
 }
@@ -4452,11 +4455,22 @@ void Aura::HandleAuraModIncreaseSpeed(bool /*apply*/, bool Real)
     GetTarget()->UpdateSpeed(MOVE_RUN, true);
 }
 
-void Aura::HandleAuraModIncreaseMountedSpeed(bool /*apply*/, bool Real)
+void Aura::HandleAuraModIncreaseMountedSpeed(bool apply, bool Real)
 {
     // all applied/removed only at real aura add/remove
     if (!Real)
         return;
+
+    // The ManTech level-40 reward scales only this mount's base speed.
+    // Native riding bonuses and slows still apply through UpdateSpeed.
+    if (apply && GetId() == 22721 && m_modifier.m_auraname == SPELL_AURA_MOD_INCREASE_MOUNTED_SPEED &&
+        GetTarget()->GetTypeId() == TYPEID_PLAYER)
+    {
+        Player* rider = static_cast<Player*>(GetTarget());
+        Item* whistle = rider->GetItemByGuid(GetCastItemGuid());
+        if (whistle && whistle->GetEntry() == 65003)
+            m_modifier.m_amount = rider->GetLevel() >= 60 && rider->GetSkillValuePure(SKILL_RIDING) >= 150 ? 100 : 60;
+    }
 
     GetTarget()->UpdateSpeed(MOVE_RUN, true);
 }
@@ -7655,6 +7669,7 @@ SpellAuraHolder::SpellAuraHolder(SpellEntry const* spellproto, Unit* target, Wor
     m_permanent(false), m_isRemovedOnShapeLost(true), m_deleted(false), m_skipUpdate(false), m_reducedProcChancePast60(false),
     m_auraScript(SpellScriptMgr::GetAuraScript(spellproto->Id))
 {
+    ManTech::EntityLedger::Add(ManTech::EntityKind::AuraHolders);
     MANGOS_ASSERT(target);
     MANGOS_ASSERT(spellproto && spellproto == sSpellTemplate.LookupEntry<SpellEntry>(spellproto->Id) && "`info` must be pointer to sSpellTemplate element");
 
@@ -8141,7 +8156,7 @@ bool SpellAuraHolder::IsNeedVisibleSlot(Unit const* caster) const
     return !m_isPassive || totemAura;
 }
 
-void SpellAuraHolder::HandleSpellSpecificBoosts(bool apply, AuraRemoveMode mode)
+void SpellAuraHolder::HandleSpellSpecificBoosts(bool apply)
 {
     std::vector<uint32> boostSpells;
 
@@ -8177,9 +8192,6 @@ void SpellAuraHolder::HandleSpellSpecificBoosts(bool apply, AuraRemoveMode mode)
             {
                 // Remove Blood Frenzy only if target no longer has any Deep Wound or Rend (applying is handled by procs)
                 if (GetSpellProto()->Mechanic != MECHANIC_BLEED)
-                    return;
-
-                if (mode == AURA_REMOVE_BY_STACK)
                     return;
 
                 // If target still has one of Warrior's bleeds, do nothing
@@ -8266,6 +8278,7 @@ void SpellAuraHolder::HandleSpellSpecificBoosts(bool apply, AuraRemoveMode mode)
 
 SpellAuraHolder::~SpellAuraHolder()
 {
+    ManTech::EntityLedger::Remove(ManTech::EntityKind::AuraHolders);
     // note: auras in delete list won't be affected since they clear themselves from holder when adding to deletedAuraslist
     for (int32 i = 0; i < MAX_EFFECT_INDEX; ++i)
         delete m_auras[i];

@@ -755,6 +755,11 @@ void GameObject::Update(const uint32 diff)
         }
     }
 
+    // A one-participant owned ritual is already full when its caster creates it.
+    // Static altars still require a click, and multi-participant summons are unchanged.
+    if (!m_delayedActionTimer && GetLootState() == GO_READY && CanCompleteSoloRitual())
+        m_delayedActionTimer = std::max(uint32(1), GetGOInfo()->summoningRitualCustom.delay);
+
     if (m_delayedActionTimer)
     {
         if (m_delayedActionTimer <= diff)
@@ -1575,6 +1580,8 @@ void GameObject::Use(Unit* user, SpellEntry const* spellInfo)
                 sModuleMgr.OnGossipHello(player, GetObjectGuid());
 #endif
                 player->SendPreparedGossip(this);
+
+
             }
 
             return;
@@ -2527,11 +2534,32 @@ void GameObject::SetInUse(bool use)
         SetGoState(GO_STATE_READY);
 }
 
+bool GameObject::CanCompleteSoloRitual() const
+{
+    if (!IsInWorld() || GetGoType() != GAMEOBJECT_TYPE_SUMMONING_RITUAL ||
+        GetGOInfo()->summoningRitual.reqParticipants != 1 || !GetUniqueUseCount() || !GetSpellId())
+        return false;
+
+    Unit* owner = GetOwner();
+    if (!owner || owner->GetTypeId() != TYPEID_PLAYER || !owner->IsAlive())
+        return false;
+
+    // The spell effect already registered this caster. Complete from the object
+    // update, never recursively while its creation spell is still executing.
+    Spell* channel = owner->GetCurrentSpell(CURRENT_CHANNELED_SPELL);
+    return channel && channel->m_spellInfo->Id == GetSpellId();
+}
+
 void GameObject::TriggerSummoningRitual()
 {
     const GameObjectInfo* info = GetGOInfo();
 
     Unit* owner = GetOwner();
+    // Recheck after a configured delay: cancellation, death, or a different
+    // channel must not complete an abandoned one-player ritual.
+    if (owner && info->summoningRitual.reqParticipants == 1 && !CanCompleteSoloRitual())
+        return;
+
     Unit* caster = owner;
 
     if (!owner)

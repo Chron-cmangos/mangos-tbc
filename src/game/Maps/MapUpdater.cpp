@@ -1,3 +1,4 @@
+#include "Util/DevDiagnostics.h"
 /*
  * This file is part of the CMaNGOS Project. See AUTHORS file for Copyright information
  *
@@ -18,8 +19,9 @@
 
 #include "MapUpdater.h"
 #include "MapWorkers.h"
+#include <algorithm>
 
-MapUpdater::MapUpdater(size_t num_threads) : _cancelationToken(false), pending_requests(0)
+MapUpdater::MapUpdater(size_t num_threads) : _cancelationToken(false), pending_requests(0), peak_pending_requests(0)
 {
     for (size_t i = 0; i < num_threads; ++i)
         _workerThreads.push_back(std::thread(&MapUpdater::WorkerThread, this));
@@ -46,6 +48,7 @@ void MapUpdater::deactivate()
 
 void MapUpdater::wait()
 {
+    MANTECH_DIAG_SCOPE(MapBarrier,1,nullptr);
     std::unique_lock<std::mutex> lock(_lock);
 
     while (pending_requests > 0)
@@ -76,7 +79,30 @@ void MapUpdater::schedule_update(Worker* worker)
     std::lock_guard<std::mutex> lock(_lock);
 
     ++pending_requests;
+    peak_pending_requests = std::max(peak_pending_requests, pending_requests);
+    #ifdef MANTECH_DEV_DIAGNOSTICS
+    worker->diagQueued=ManTech::Diag::Now();
+#endif
     _queue.Push(std::move(worker));
+}
+
+size_t MapUpdater::GetPendingRequests()
+{
+    std::lock_guard<std::mutex> lock(_lock);
+    return pending_requests;
+}
+
+size_t MapUpdater::GetQueuedRequests()
+{
+    return _queue.Size();
+}
+
+size_t MapUpdater::ConsumePeakPendingRequests()
+{
+    std::lock_guard<std::mutex> lock(_lock);
+    size_t const peak = peak_pending_requests;
+    peak_pending_requests = pending_requests;
+    return peak;
 }
 
 void MapUpdater::WorkerThread()
@@ -93,7 +119,14 @@ void MapUpdater::WorkerThread()
             return;
         }
 
-        request->execute();
+        {
+#ifdef MANTECH_DEV_DIAGNOSTICS
+            MANTECH_DIAG_CONTEXT(unsigned(request->diagContext>>32),unsigned(request->diagContext));
+            ManTech::Diag::JobQueued(request->diagQueued,request->DiagnosticName());
+            MANTECH_DIAG_SCOPE(JobExecute,1,request->DiagnosticName());
+#endif
+            request->execute();
+        }
 
         delete request;
     }

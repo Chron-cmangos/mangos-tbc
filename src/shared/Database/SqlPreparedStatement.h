@@ -88,6 +88,8 @@ class SqlStmtFieldData
         double toDouble() const { MANGOS_ASSERT(m_type == FIELD_DOUBLE); return m_binaryData.d; }
         const char* toStr() const { MANGOS_ASSERT(m_type == FIELD_STRING); return m_szStringData.c_str(); }
 
+        std::size_t StringCapacity() const { return m_type == FIELD_STRING ? m_szStringData.capacity()+1 : 0; }
+
         // get type of data
         SqlStmtFieldType type() const { return m_type; }
         // get underlying buffer type

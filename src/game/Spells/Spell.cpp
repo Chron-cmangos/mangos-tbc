@@ -1,3 +1,4 @@
+#include "Util/DevDiagnostics.h"
 /*
  * This file is part of the CMaNGOS Project. See AUTHORS file for Copyright information
  *
@@ -3291,6 +3292,9 @@ SpellCastResult Spell::SpellStart(SpellCastTargets const* targets, Aura* trigger
 
     // create and add update event for this spell
     m_spellEvent = new SpellEvent(this);
+    // Cast checks and preparation can synchronously remove the caster's events.
+    // Keep the event-owned spell alive until this call finishes using it.
+    auto spellLifetime = m_spellEvent->GetSpellWeakPtr().lock();
     m_trueCaster->m_events.AddEvent(m_spellEvent, m_trueCaster->m_events.CalculateTime(1));
     m_trueCaster->SetNextUpdateTime(1);
 
@@ -3306,9 +3310,13 @@ SpellCastResult Spell::SpellStart(SpellCastTargets const* targets, Aura* trigger
     }
 
     SpellCastResult result = PreCastCheck();
+    if (m_spellState == SPELL_STATE_FINISHED)
+        return result == SPELL_CAST_OK ? SPELL_FAILED_ERROR : result;
     if (result != SPELL_CAST_OK)
     {
         SendCastResult(result);
+        if (m_CastItem && (m_CastItem->GetEntry() == 65000 || m_CastItem->GetEntry() == 65001 || m_CastItem->GetEntry() == 65002 || m_CastItem->GetEntry() == 65004))
+            SendInterrupted(result);
         finish(false);
         return result;
     }
@@ -3450,6 +3458,10 @@ void Spell::cancel()
 
 SpellCastResult Spell::cast(bool skipCheck)
 {
+    // Preparation callbacks can cancel this spell before an instant cast starts.
+    if (m_spellState == SPELL_STATE_FINISHED)
+        return SPELL_FAILED_ERROR;
+
     SetExecutedCurrently(true);
     SpellModRAII spellModController(this, m_trueCaster->GetSpellModOwner());
 
@@ -3923,11 +3935,43 @@ void Spell::SendSpellCooldown()
     if (m_spellInfo->HasAttribute(SPELL_ATTR_PASSIVE) || m_channelOnly)
         return;
 
-    m_trueCaster->AddCooldown(*m_spellInfo, cooldownItem, m_spellInfo->HasAttribute(SPELL_ATTR_COOLDOWN_ON_EVENT));
+    bool cooldownOnEvent = m_spellInfo->HasAttribute(SPELL_ATTR_COOLDOWN_ON_EVENT);
+
+    // ManTech portable services use an explicit persistent item cooldown.
+    // Do not leave their cooldowns on hold: an on-hold cooldown is not
+    // persisted at logout, which would let the item be reused after relogging.
+    bool const portableUtility = m_CastItem &&
+        (m_CastItem->GetEntry() == 65000 || m_CastItem->GetEntry() == 65001 || m_CastItem->GetEntry() == 65002 || m_CastItem->GetEntry() == 65004);
+    if (portableUtility)
+        cooldownOnEvent = false;
+
+    m_trueCaster->AddCooldown(*m_spellInfo, cooldownItem, cooldownOnEvent);
+
+    if (portableUtility && m_trueCaster->GetTypeId() == TYPEID_PLAYER)
+    {
+        uint32 duration = 0;
+        for (auto const& itemSpell : m_CastItem->GetProto()->Spells)
+            if (itemSpell.SpellId == m_spellInfo->Id && itemSpell.SpellCooldown > 0)
+            {
+                duration = uint32(itemSpell.SpellCooldown);
+                break;
+            }
+
+        if (duration)
+        {
+            WorldPacket data(SMSG_SPELL_COOLDOWN, 8 + 1 + 8);
+            data << m_trueCaster->GetObjectGuid();
+            data << uint8(SPELL_COOLDOWN_FLAG_NONE);
+            data << uint32(m_spellInfo->Id);
+            data << uint32(duration);
+            static_cast<Player*>(m_trueCaster)->GetSession()->SendPacket(data);
+        }
+    }
 }
 
 void Spell::update(uint32 difftime)
 {
+    MANTECH_DIAG_SCOPE(Spell,32,nullptr);
     if (!m_updated)
     {
         m_updated = true;
@@ -5127,6 +5171,18 @@ Unit* Spell::GetPrefilledUnitTargetOrUnitTarget(SpellEffectIndex effIndex) const
 
 SpellCastResult Spell::CheckCast(bool strict)
 {
+    // Only the custom reward whistle uses these requirements. Native Black
+    // War Raptor items and learned mounts keep their original behavior.
+    if (m_CastItem && m_CastItem->GetEntry() == 65003 && m_spellInfo->Id == 22721 &&
+        m_trueCaster->GetTypeId() == TYPEID_PLAYER)
+    {
+        Player* rider = static_cast<Player*>(m_trueCaster);
+        if (rider->GetLevel() < 40)
+            return SPELL_FAILED_LOW_CASTLEVEL;
+        if (rider->GetSkillValuePure(SKILL_RIDING) < 75)
+            return SPELL_FAILED_MIN_SKILL;
+    }
+
     // check cooldowns to prevent cheating (ignore passive spells, that client side visual only)
     if (!m_ignoreCooldowns && !m_spellInfo->HasAttribute(SPELL_ATTR_PASSIVE)
             && !m_trueCaster->IsSpellReady(*m_spellInfo, m_CastItem ? m_CastItem->GetProto() : nullptr))
@@ -7689,8 +7745,10 @@ SpellEvent::SpellEvent(Spell* spell) : BasicEvent()
         }
         else
         {
-            sLog.outError("~SpellEvent: %s %u tried to delete non-deletable spell %u. Was not deleted, causes memory leak.",
-                          (toDelete->GetCaster()->GetTypeId() == TYPEID_PLAYER ? "Player" : "Creature"), toDelete->GetCaster()->GetGUIDLow(), toDelete->m_spellInfo->Id);
+            sLog.outError("~SpellEvent: %s %u tried to delete non-deletable spell %u. Was not deleted, causes memory leak. entry=%u map=%u spell_state=%u executed_currently=%u",
+                          (toDelete->GetCaster()->GetTypeId() == TYPEID_PLAYER ? "Player" : "Creature"), toDelete->GetCaster()->GetGUIDLow(), toDelete->m_spellInfo->Id,
+                          toDelete->GetCaster()->GetEntry(), toDelete->GetCaster()->GetMapId(),
+                          uint32(toDelete->getState()), uint32(toDelete->IsExecutedCurrently()));
         }
     });
 }

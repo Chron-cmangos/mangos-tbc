@@ -28,6 +28,9 @@ item_gor_dreks_ointment(i30175)     Protecting Our Own(q10488)
 EndContentData */
 
 #include "AI/ScriptDevAI/include/sc_common.h"
+#include "Entities/GameObject.h"
+#include "Maps/Map.h"
+#include "Entities/PortableRepairVendor.h"
 #include "Spells/Spell.h"
 #include "Spells/Scripts/SpellScript.h"
 
@@ -581,8 +584,190 @@ struct ShattrathFlasks : public AuraScript
     }
 };
 
+namespace
+{
+    struct ManTechPortableMailboxSpell : public SpellScript
+    {
+        SpellCastResult OnCheckCast(Spell* spell, bool /*strict*/) const override
+        {
+            Item* item = spell->GetCastItem();
+            if (!item || item->GetEntry() != 65000)
+                return SPELL_CAST_OK;
+
+            WorldObject* caster = spell->GetTrueCaster();
+            GameObjectInfo const* info = ObjectMgr::GetGameObjectInfo(142102);
+            if (!caster || caster->GetTypeId() != TYPEID_PLAYER || !caster->IsInWorld() ||
+                !info || info->type != GAMEOBJECT_TYPE_MAILBOX)
+                return SPELL_FAILED_NOT_HERE;
+            return SPELL_CAST_OK;
+        }
+
+        void OnCast(Spell* spell) const override
+        {
+            Item* item = spell->GetCastItem();
+            WorldObject* caster = spell->GetTrueCaster();
+            if (!item || item->GetEntry() != 65000 || !caster ||
+                caster->GetTypeId() != TYPEID_PLAYER || !caster->IsInWorld())
+                return;
+
+            Player* player = static_cast<Player*>(caster);
+            Map* map = player->GetMap();
+            float x, y, z;
+            player->GetClosePoint(x, y, z, DEFAULT_WORLD_OBJECT_SIZE, 1.0f);
+
+            GameObject* mailbox = GameObject::CreateGameObject(142102);
+            uint32 lowGuid = map->GenerateLocalLowGuid(HIGHGUID_GAMEOBJECT);
+            if (!mailbox->Create(lowGuid, lowGuid, 142102, map, x, y, z, player->GetOrientation()))
+            {
+                delete mailbox;
+                // OnCast runs after SendSpellCooldown. Refund only this spell
+                // if creation fails instead of consuming the utility's charge.
+                player->RemoveSpellCooldown(*spell->m_spellInfo);
+                player->GetSession()->SendNotification("The portable mailbox could not be summoned. Its cooldown was reset.");
+                return;
+            }
+
+            mailbox->SetRespawnTime(300);
+            mailbox->SetSpellId(spell->m_spellInfo->Id);
+            mailbox->SetSpawnerGuid(player->GetObjectGuid());
+            map->Add(mailbox);
+            mailbox->AIM_Initialize();
+        }
+    };
+
+    struct ManTechPortableRepairSpell : public SpellScript
+    {
+        void OnSummon(Spell* spell, Creature* summon) const override
+        {
+            Item* item = spell->GetCastItem();
+            WorldObject* caster = spell->GetTrueCaster();
+            if (!item || item->GetEntry() != PortableRepairVendor::HAMMER_ITEM || !caster ||
+                caster->GetTypeId() != TYPEID_PLAYER || !summon || summon->GetEntry() != PortableRepairVendor::CREATURE_ENTRY)
+                return;
+
+            // ResolveSummonEntry has already replaced the native engineering
+            // creature with our dedicated vendor before OnSummon runs.
+            Player* player = static_cast<Player*>(caster);
+            summon->SetFactionTemporary(player->GetTeam() == ALLIANCE ? 12 : 29, TEMPFACTION_NONE);
+        }
+    };
+
+    // A distinct item-use carrier prevents sharing the native engineering cooldown.
+    // Non-item uses of the carrier (including world events) remain untouched.
+    struct ManTechPortableRepairCarrierSpell : public SpellScript
+    {
+        SpellCastResult OnCheckCast(Spell* spell, bool /*strict*/) const override
+        {
+            Item* item = spell->GetCastItem();
+            if (!item || item->GetEntry() != PortableRepairVendor::HAMMER_ITEM)
+                return SPELL_CAST_OK;
+            WorldObject* caster = spell->GetTrueCaster();
+            if (!caster || caster->GetTypeId() != TYPEID_PLAYER || !caster->IsInWorld() ||
+                !ObjectMgr::GetCreatureTemplate(PortableRepairVendor::CREATURE_ENTRY))
+                return SPELL_FAILED_NOT_HERE;
+            return SPELL_CAST_OK;
+        }
+
+        void OnCast(Spell* spell) const override
+        {
+            Item* item = spell->GetCastItem();
+            WorldObject* caster = spell->GetTrueCaster();
+            if (!item || item->GetEntry() != PortableRepairVendor::HAMMER_ITEM || !caster ||
+                caster->GetTypeId() != TYPEID_PLAYER || !caster->IsInWorld())
+                return;
+
+            Player* player = static_cast<Player*>(caster);
+            float x, y, z;
+            player->GetClosePoint(x, y, z, DEFAULT_WORLD_OBJECT_SIZE, 1.0f);
+            const uint32 faction = player->GetTeam() == ALLIANCE ? 12 : 29;
+            if (!player->SummonCreature(PortableRepairVendor::CREATURE_ENTRY, x, y, z,
+                    player->GetOrientation(), TEMPSPAWN_TIMED_OR_DEAD_DESPAWN,
+                    600000, false, false, 0, faction))
+                player->GetSession()->SendNotification("The portable repair hammer could not be used here.");
+        }
+    };
+
+    struct ManTechPortableBankSpell : public SpellScript
+    {
+        SpellCastResult OnCheckCast(Spell* spell, bool /*strict*/) const override
+        {
+            Item* item = spell->GetCastItem();
+            if (!item || item->GetEntry() != 65004)
+                return SPELL_CAST_OK;
+            WorldObject* caster = spell->GetTrueCaster();
+            CreatureInfo const* info = ObjectMgr::GetCreatureTemplate(65004);
+            if (!caster || caster->GetTypeId() != TYPEID_PLAYER || !caster->IsInWorld() ||
+                !info || !(info->NpcFlags & UNIT_NPC_FLAG_BANKER))
+                return SPELL_FAILED_NOT_HERE;
+            return SPELL_CAST_OK;
+        }
+
+        void OnCast(Spell* spell) const override
+        {
+            Item* item = spell->GetCastItem();
+            WorldObject* caster = spell->GetTrueCaster();
+            if (!item || item->GetEntry() != 65004 || !caster ||
+                caster->GetTypeId() != TYPEID_PLAYER || !caster->IsInWorld())
+                return;
+
+            Player* player = static_cast<Player*>(caster);
+            float x, y, z;
+            player->GetClosePoint(x, y, z, DEFAULT_WORLD_OBJECT_SIZE, 1.0f);
+            // A real, temporary banker retains native range, personal-bank
+            // storage and bag-purchase checks. It never exposes guild storage.
+            if (OnCheckCast(spell, false) != SPELL_CAST_OK ||
+                !player->SummonCreature(65004, x, y, z, player->GetOrientation(),
+                    TEMPSPAWN_TIMED_DESPAWN, 600000, false, false, 0, 35))
+            {
+                player->RemoveSpellCooldown(*spell->m_spellInfo);
+                player->GetSession()->SendNotification("The portable bank could not be summoned. Its cooldown was reset.");
+            }
+        }
+    };
+
+    struct ManTechPortableAuctioneerSpell : public SpellScript
+    {
+        SpellCastResult OnCheckCast(Spell* spell, bool /*strict*/) const override
+        {
+            Item* item = spell->GetCastItem();
+            if (!item || item->GetEntry() != 65002)
+                return SPELL_CAST_OK;
+            WorldObject* caster = spell->GetTrueCaster();
+            if (!caster || caster->GetTypeId() != TYPEID_PLAYER || !caster->IsInWorld() ||
+                !ObjectMgr::GetCreatureTemplate(65002))
+                return SPELL_FAILED_NOT_HERE;
+            return SPELL_CAST_OK;
+        }
+
+        void OnCast(Spell* spell) const override
+        {
+            Item* item = spell->GetCastItem();
+            WorldObject* caster = spell->GetTrueCaster();
+            if (!item || item->GetEntry() != 65002 || !caster ||
+                caster->GetTypeId() != TYPEID_PLAYER || !caster->IsInWorld())
+                return;
+
+            Player* player = static_cast<Player*>(caster);
+            // Native auction routing uses the auctioneer's faction. Do not use
+            // the neutral template faction or the player's racial faction ID.
+            const uint32 faction = player->GetTeam() == ALLIANCE ? 12 : 29;
+            float x, y, z;
+            player->GetClosePoint(x, y, z, DEFAULT_WORLD_OBJECT_SIZE, 1.0f);
+            if (!player->SummonCreature(65002, x, y, z, player->GetOrientation(),
+                    TEMPSPAWN_TIMED_DESPAWN, 600000, false, false, 0, faction))
+                player->GetSession()->SendNotification("The portable auctioneer could not be summoned.");
+        }
+    };
+
+}
+
 void AddSC_item_scripts()
 {
+    RegisterSpellScript<ManTechPortableMailboxSpell>("spell_mantech_portable_mailbox");
+    RegisterSpellScript<ManTechPortableRepairSpell>("spell_mantech_portable_repair");
+    RegisterSpellScript<ManTechPortableRepairCarrierSpell>("spell_mantech_portable_repair_carrier");
+    RegisterSpellScript<ManTechPortableAuctioneerSpell>("spell_mantech_portable_auctioneer");
+    RegisterSpellScript<ManTechPortableBankSpell>("spell_mantech_portable_bank");
     Script* pNewScript = new Script;
     pNewScript->Name = "item_orb_of_draconic_energy";
     pNewScript->pItemUse = &ItemUse_item_orb_of_draconic_energy;

@@ -1,3 +1,6 @@
+#include "Util/MapUpdateOrder.h"
+#include <vector>
+#include "Util/DevDiagnostics.h"
 /*
  * This file is part of the CMaNGOS Project. See AUTHORS file for Copyright information
  *
@@ -61,6 +64,22 @@ void MapManager::Initialize()
     {
         m_objectUpdater.activate(objectThreads);
         sLog.outString(">> Parallel in-map object/visibility workers: %d", objectThreads);
+    }
+
+#ifdef ENABLE_PLAYERBOTS
+    int const idleBotThreads = sWorld.getConfig(CONFIG_UINT32_MAP_IDLE_BOT_THREADS);
+    if (idleBotThreads > 0)
+    {
+        m_idleBotUpdater.activate(idleBotThreads);
+        sLog.outString(">> Parallel idle Playerbot AI workers: %d", idleBotThreads);
+    }
+#endif
+
+    int const cellThreads = sWorld.getConfig(CONFIG_UINT32_MAP_CELL_THREADS);
+    if (cellThreads > 0)
+    {
+        m_cellUpdater.activate(cellThreads);
+        sLog.outString(">> Parallel active-cell discovery workers: %d", cellThreads);
     }
 }
 
@@ -482,6 +501,7 @@ void MapManager::DeleteInstance(uint32 mapid, uint32 instanceId)
         if (iter->second->Instanceable())
         {
             auto node = i_maps.extract(iter);
+            m_mapUpdateMicros.erase(node.key());
 
             node.mapped()->UnloadAll(true);
         }
@@ -490,10 +510,15 @@ void MapManager::DeleteInstance(uint32 mapid, uint32 instanceId)
 
 void MapManager::Update(uint32 diff)
 {
+    MANTECH_DIAG_SCOPE(Maps,1,nullptr);
     i_timer.Update(diff);
     if (!i_timer.Passed())
         return;
 
+    struct DueMap { Map* map; uint32 diff; uint64 estimatedMicros; uint64* completedMicros; };
+    std::vector<DueMap> dueMaps;
+    if (m_updater.activated())
+        dueMaps.reserve(i_maps.size());
     const uint32 mapDiff = static_cast<uint32>(i_timer.GetCurrent());
     const bool adaptiveLoad = sWorld.getConfig(CONFIG_BOOL_ADAPTIVE_LOAD_ENABLED);
     const uint32 emptyMapInterval = sWorld.getConfig(CONFIG_UINT32_ADAPTIVE_LOAD_EMPTY_MAP_UPDATE_MS);
@@ -522,13 +547,21 @@ void MapManager::Update(uint32 diff)
         }
 
         if (m_updater.activated())
-            m_updater.schedule_update(new MapUpdateWorker(*map.second, updateDiff, m_updater));
+        {
+            auto& previous = m_mapUpdateMicros[map.first];
+            dueMaps.push_back({map.second.get(), updateDiff, previous, &previous});
+        }
         else
             map.second->Update(updateDiff);
     }
 
     if (m_updater.activated())
+    {
+        ManTech::OrderMapUpdates(dueMaps);
+        for (auto const& due : dueMaps)
+            m_updater.schedule_update(new MapUpdateWorker(*due.map, due.diff, m_updater, due.completedMicros));
         m_updater.wait();
+    }
 
     SwitchPlayersInstances();
 
@@ -542,6 +575,7 @@ void MapManager::Update(uint32 diff)
             auto node = i_maps.extract(iter++);
 
             m_emptyMapUpdateAccumulator.erase(node.key());
+            m_mapUpdateMicros.erase(node.key());
 
             node.mapped()->UnloadAll(true);
         }
@@ -582,11 +616,16 @@ void MapManager::UnloadAll()
 
     i_maps.clear();
     m_emptyMapUpdateAccumulator.clear();
+    m_mapUpdateMicros.clear();
 
     if (m_updater.activated())
         m_updater.deactivate();
     if (m_objectUpdater.activated())
         m_objectUpdater.deactivate();
+    if (m_idleBotUpdater.activated())
+        m_idleBotUpdater.deactivate();
+    if (m_cellUpdater.activated())
+        m_cellUpdater.deactivate();
 
     TerrainManager::Instance().UnloadAll();
 }
@@ -599,7 +638,8 @@ void MapManager::InitMaxInstanceId()
     if (queryResult)
     {
         i_MaxInstanceId = queryResult->Fetch()[0].GetUInt32();
-    } 
+    }
+
 }
 
 uint32 MapManager::GetNumInstances()

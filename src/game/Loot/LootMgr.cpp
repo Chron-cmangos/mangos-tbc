@@ -798,6 +798,22 @@ bool GroupLootRoll::TryToStart(Loot& loot, uint32 itemSlot)
 }
 
 // Add vote from playerGuid
+// Read-only eligibility for automatic clients. Keep the original roll's method
+// and allowed mask rather than the group's possibly changed current settings.
+RollVoteMask GroupLootRoll::GetVoteMaskFor(Player* player) const
+{
+    if (!player || !m_isStarted || !m_loot || !m_lootItem || m_endTime <= time(nullptr))
+        return RollVoteMask(0);
+    auto voter = m_rollVoteMap.find(player->GetObjectGuid());
+    if (voter == m_rollVoteMap.end() || voter->second.vote != ROLL_NOT_EMITED_YET ||
+        !m_lootItem->IsAllowed(player, m_loot))
+        return RollVoteMask(0);
+    RollVoteMask mask = m_voteMask;
+    if (m_loot->m_lootMethod == NEED_BEFORE_GREED && player->CanUseItem(m_lootItem->itemProto) != EQUIP_ERR_OK)
+        mask = RollVoteMask(mask & ~ROLL_VOTE_MASK_NEED);
+    return mask;
+}
+
 bool GroupLootRoll::PlayerVote(Player* player, RollVote vote)
 {
     ObjectGuid const& playerGuid = player->GetObjectGuid();

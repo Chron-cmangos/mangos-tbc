@@ -951,7 +951,7 @@ bool AuctionEntry::BuildAuctionInfo(WorldPacket& data) const
         int64(expireTime - time(nullptr)) * IN_MILLISECONDS,
         0,
         std::numeric_limits<int32>::max());
-    data << uint32(timeLeftMs);  
+    data << uint32(timeLeftMs);                             // time left
     data << ObjectGuid(HIGHGUID_PLAYER, bidder);            // auction->bidder current
     data << uint32(bid);                                    // current bid
     return true;

@@ -127,6 +127,7 @@ AccountOpResult AccountMgr::DeleteAccount(uint32 accid) const
 
     // table realm specific but common for all characters of account for realm
     CharacterDatabase.PExecute("DELETE FROM character_tutorial WHERE account = '%u'", accid);
+    CharacterDatabase.PExecute("DELETE FROM account_dungeon_travel WHERE account = '%u'", accid);
 
     LoginDatabase.BeginTransaction();
 

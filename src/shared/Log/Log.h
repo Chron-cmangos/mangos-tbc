@@ -23,6 +23,7 @@
 #include "Policies/Singleton.h"
 
 #include <mutex>
+#include <map>
 
 class Config;
 class ByteBuffer;
@@ -100,45 +101,7 @@ class Log : public MaNGOS::Singleton<Log, MaNGOS::ClassLevelLockable<Log, std::m
 
         ~Log()
         {
-            if (logfile != nullptr)
-                fclose(logfile);
-            logfile = nullptr;
-
-            if (gmLogfile != nullptr)
-                fclose(gmLogfile);
-            gmLogfile = nullptr;
-
-            if (charLogfile != nullptr)
-                fclose(charLogfile);
-            charLogfile = nullptr;
-
-            if (dberLogfile != nullptr)
-                fclose(dberLogfile);
-            dberLogfile = nullptr;
-
-            if (eventAiErLogfile != nullptr)
-                fclose(eventAiErLogfile);
-            eventAiErLogfile = nullptr;
-
-            if (scriptErrLogFile != nullptr)
-                fclose(scriptErrLogFile);
-            scriptErrLogFile = nullptr;
-
-            if (raLogfile != nullptr)
-                fclose(raLogfile);
-            raLogfile = nullptr;
-
-            if (worldLogfile != nullptr)
-                fclose(worldLogfile);
-            worldLogfile = nullptr;
-
-            if (customLogFile != nullptr)
-                fclose(customLogFile);
-            customLogFile = nullptr;
-
-            if (performanceLogFile != nullptr)
-                fclose(performanceLogFile);
-            performanceLogFile = nullptr;
+            CloseLogFiles();
         }
     public:
         void Initialize();
@@ -200,8 +163,13 @@ class Log : public MaNGOS::Singleton<Log, MaNGOS::ClassLevelLockable<Log, std::m
         void traceLog();
 
     private:
-        FILE* openLogFile(char const* configFileName, char const* configTimeStampFlag, char const* mode);
+        FILE* openLogFile(char const* configFileName, char const* configTimeStampFlag, char const* mode, char const* defaultFileName = nullptr);
+        void CloseLogFiles();
         FILE* openGmlogPerAccount(uint32 account);
+        void RotateLogFilesIfNeeded();
+        std::map<FILE*, std::pair<std::string, int>> m_rotationFiles;
+        time_t m_nextRotationCheck = 0;
+        std::map<std::string, time_t> m_rotationRetryAfter;
 
         FILE* raLogfile;
         FILE* logfile;

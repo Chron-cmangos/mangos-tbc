@@ -45,10 +45,6 @@ void VisibleChangesNotifier::Visit(CameraMapType& m)
 void VisibleNotifier::Notify()
 {
     Player& player = *i_camera.GetOwner();
-#ifdef ENABLE_PLAYERBOTS
-    if (!player.isRealPlayer())
-        return;
-#endif
 
     // at this moment i_clientGUIDs have guids that not iterate at grid level checks
     // but exist one case when this possible and object not out of range: transports
@@ -112,12 +108,28 @@ void VisibleNotifier::Notify()
             player.RemoveAtClient(target);
         }
         else
-            sLog.outCustomLog("Object was %s in current map.", player.GetMap()->m_objRemoveList.find(*itr) == player.GetMap()->m_objRemoveList.end() ? "not found" : "found");
+        {
+            // The object may already have left the map. Drop the one-sided
+            // reference too, or every later camera pass copies it again.
+            player.GetClientGuids().erase(*itr);
+#ifdef ENABLE_PLAYERBOTS
+            if (player.isRealPlayer())
+#endif
+                sLog.outCustomLog("Object was %s in current map.", player.GetMap()->m_objRemoveList.find(*itr) == player.GetMap()->m_objRemoveList.end() ? "not found" : "found");
+        }
         
 
         DEBUG_FILTER_LOG(LOG_FILTER_VISIBILITY_CHANGES, "%s is out of range (no in active cells set) now for %s",
                          itr->GetString().c_str(), player.GetGuidStr().c_str());
     }
+
+    // Bot cameras populate AddAtClient too. Finish out-of-range cleanup,
+    // including transport and overridden-visibility exceptions, before
+    // skipping client notification. Stealth checks also use HasAtClient.
+#ifdef ENABLE_PLAYERBOTS
+    if (!player.isRealPlayer())
+        return;
+#endif
 
     if (i_data.HasData())
     {

@@ -1,3 +1,4 @@
+#include "Util/DevDiagnostics.h"
 /*
  * This file is part of the CMaNGOS Project. See AUTHORS file for Copyright information
  *
@@ -31,12 +32,13 @@
 #endif
 
 #include <limits>
+#include "Memory/ScratchLease.h"
 ////////////////// PathFinder //////////////////
 PathFinder::PathFinder(const Unit* owner, bool ignoreNormalization) :
     m_type(PATHFIND_BLANK), m_useStraightPath(false), m_forceDestination(false), m_straightLine(false),
     m_pointPathLimit(MAX_POINT_PATH_LENGTH), // TODO: Fix legitimate long paths
-    m_cachedPoints(m_pointPathLimit * VERTEX_SIZE), m_pathPolyRefs(m_pointPathLimit), m_polyLength(0),
-    m_smoothPathPolyRefs(m_pointPathLimit), m_sourceUnit(owner), m_navMesh(nullptr), m_navMeshQuery(nullptr),
+    m_pathPolyRefs(m_pointPathLimit), m_polyLength(0),
+    m_sourceUnit(owner), m_navMesh(nullptr), m_navMeshQuery(nullptr),
     m_defaultMapId(m_sourceUnit->GetMapId()), m_ignoreNormalization(ignoreNormalization)
 #ifdef ENABLE_PLAYERBOTS
     , m_defaultInstanceId(m_sourceUnit->GetInstanceId())
@@ -57,7 +59,7 @@ PathFinder::PathFinder(const Unit* owner, bool ignoreNormalization) :
 PathFinder::PathFinder() :
     m_polyLength(0), m_type(PATHFIND_BLANK),
     m_useStraightPath(false), m_forceDestination(false), m_straightLine(false), m_pointPathLimit(MAX_POINT_PATH_LENGTH), // TODO: Fix legitimate long paths
-    m_sourceUnit(nullptr), m_navMesh(nullptr), m_navMeshQuery(nullptr), m_cachedPoints(m_pointPathLimit* VERTEX_SIZE), m_pathPolyRefs(m_pointPathLimit), m_smoothPathPolyRefs(m_pointPathLimit), m_defaultMapId(0), m_defaultInstanceId(0)
+    m_sourceUnit(nullptr), m_navMesh(nullptr), m_navMeshQuery(nullptr), m_pathPolyRefs(m_pointPathLimit), m_defaultMapId(0), m_defaultInstanceId(0)
 {
 
 }
@@ -65,7 +67,7 @@ PathFinder::PathFinder() :
 PathFinder::PathFinder(uint32 mapId, uint32 instanceId) :
     m_polyLength(0), m_type(PATHFIND_BLANK),
     m_useStraightPath(false), m_forceDestination(false), m_straightLine(false), m_pointPathLimit(MAX_POINT_PATH_LENGTH), // TODO: Fix legitimate long paths
-    m_sourceUnit(nullptr), m_navMesh(nullptr), m_navMeshQuery(nullptr), m_cachedPoints(m_pointPathLimit* VERTEX_SIZE), m_pathPolyRefs(m_pointPathLimit), m_smoothPathPolyRefs(m_pointPathLimit), m_defaultMapId(mapId), m_defaultInstanceId(instanceId)
+    m_sourceUnit(nullptr), m_navMesh(nullptr), m_navMeshQuery(nullptr), m_pathPolyRefs(m_pointPathLimit), m_defaultMapId(mapId), m_defaultInstanceId(instanceId)
 {
     MMAP::MMapManager* mmap = MMAP::MMapFactory::createOrGetMMapManager();
     m_defaultNavMeshQuery = mmap->GetNavMeshQuery(mapId, instanceId);
@@ -121,6 +123,7 @@ bool PathFinder::calculate(float destX, float destY, float destZ, bool forceDest
 
 bool PathFinder::calculate(Vector3 const& start, Vector3 const& dest, bool forceDest/* = false*/, bool straightLine/* = false*/)
 {
+    MANTECH_DIAG_SCOPE(Path,32,nullptr);
     if (!MaNGOS::IsValidMapCoord(dest.x, dest.y, dest.z))
         return false;
 
@@ -794,8 +797,8 @@ void PathFinder::BuildPolyPath(const Vector3& startPos, const Vector3& endPos)
 
 void PathFinder::BuildPointPath(const float* startPoint, const float* endPoint)
 {
-    if (m_pointPathLimit * VERTEX_SIZE > m_cachedPoints.size())
-        m_cachedPoints.resize(m_pointPathLimit * VERTEX_SIZE);
+    ManTech::ScratchLease<float> pointScratch(m_pointPathLimit * VERTEX_SIZE);
+    auto& m_cachedPoints = pointScratch.Get();
     uint32 pointCount = 0;
     dtStatus dtResult = DT_FAILURE;
 
@@ -1229,8 +1232,8 @@ dtStatus PathFinder::findSmoothPath(const float* startPos, const float* endPos,
     *smoothPathSize = 0;
     uint32 nsmoothPath = 0;
 
-    if (m_pointPathLimit > m_smoothPathPolyRefs.size())
-        m_smoothPathPolyRefs.resize(m_pointPathLimit);
+    ManTech::ScratchLease<dtPolyRef> corridorScratch(m_pointPathLimit);
+    auto& m_smoothPathPolyRefs = corridorScratch.Get();
     memcpy(m_smoothPathPolyRefs.data(), polyPath, polyPathSize * sizeof(dtPolyRef));
     uint32 npolys = polyPathSize;
 

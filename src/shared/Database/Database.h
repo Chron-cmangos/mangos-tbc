@@ -1,3 +1,4 @@
+#include "Util/DevDiagnostics.h"
 /*
  * This file is part of the CMaNGOS Project. See AUTHORS file for Copyright information
  *
@@ -70,7 +71,7 @@ class SqlConnection
         class Lock
         {
             public:
-                Lock(SqlConnection* conn) : m_pConn(conn) { m_pConn->m_mutex.lock(); }
+                Lock(SqlConnection* conn) : m_pConn(conn) { MANTECH_DIAG_SCOPE(DbLock,1,"SQL connection mutex"); m_pConn->m_mutex.lock(); }
                 ~Lock() { m_pConn->m_mutex.unlock(); }
 
                 SqlConnection* operator->() const { return m_pConn; }
@@ -207,7 +208,9 @@ class Database
         virtual void ThreadEnd();
 
         // set database-wide result queue. also we should use object-bases and not thread-based result queues
-        void ProcessResultQueue();
+        void ProcessResultQueue(uint32 maxMilliseconds = 0);
+        size_t GetPendingResultCount() const;
+        size_t GetPendingAsyncOperationCount() const;
 
         bool CheckRequiredField(char const* table_name, char const* required_name);
         uint32 GetPingIntervall() const { return m_pingIntervallms; }

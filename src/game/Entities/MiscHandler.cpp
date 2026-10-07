@@ -20,6 +20,7 @@
 #include <utility>
 
 #include "Common.h"
+#include "Config/Config.h"
 #include "Tools/Language.h"
 #include "Database/DatabaseEnv.h"
 #include "Database/DatabaseImpl.h"
@@ -140,6 +141,8 @@ void WorldSession::HandleWhoOpcode(WorldPacket& recv_data)
     bool allowTwoSideWhoList = sWorld.getConfig(CONFIG_BOOL_ALLOW_TWO_SIDE_WHO_LIST);
     AccountTypes gmLevelInWhoList = (AccountTypes)sWorld.getConfig(CONFIG_UINT32_GM_LEVEL_IN_WHO_LIST);
 
+    const bool showOnlineTotal = sConfig.GetBoolDefault("WhoList.ShowOnlineTotal", false);
+    uint32 onlineCount = 0;
     uint32 matchcount = 0;
     uint32 displaycount = 0;
 
@@ -153,12 +156,19 @@ void WorldSession::HandleWhoOpcode(WorldPacket& recv_data)
     {
         Player* pl = itr->second;
 
+        // Count online characters before applying any search or visibility
+        // filters. Playerbots are Players here, so no separate bot count is added.
+        if (showOnlineTotal && pl->IsInWorld())
+            ++onlineCount;
+
+        // Population mode separates the total from faction visibility. Its
+        // name list follows the configured faction setting, including for GMs.
+        // Disabled mode retains the native GM cross-faction search behavior.
+        if (pl->GetTeam() != team && !allowTwoSideWhoList && (showOnlineTotal || security == SEC_PLAYER))
+            continue;
+
         if (security == SEC_PLAYER)
         {
-            // player can see member of other team only if CONFIG_BOOL_ALLOW_TWO_SIDE_WHO_LIST
-            if (pl->GetTeam() != team && !allowTwoSideWhoList)
-                continue;
-
             // player can see MODERATOR, GAME MASTER, ADMINISTRATOR only if CONFIG_GM_IN_WHO_LIST
             if (pl->GetSession()->GetSecurity() > gmLevelInWhoList)
                 continue;
@@ -263,7 +273,7 @@ void WorldSession::HandleWhoOpcode(WorldPacket& recv_data)
         matchcount = sWorld.getConfig(CONFIG_UINT32_MAX_WHOLIST_RETURNS);
 
     data.put(0, displaycount);                              // insert right count, count displayed
-    data.put(4, matchcount);                                // insert right count, count of matches
+    data.put(4, showOnlineTotal ? onlineCount : matchcount); // realm population or native matching total
 
     SendPacket(data);
     DEBUG_LOG("WORLD: Send SMSG_WHO Message");
@@ -803,7 +813,7 @@ void WorldSession::HandleUpdateAccountData(WorldPacket& recv_data)
 
     DEBUG_LOG("UAD: type %u, decompressedSize %u", type, decompressedSize);
 
-    if (type > NUM_ACCOUNT_DATA_TYPES)
+    if (type >= NUM_ACCOUNT_DATA_TYPES)
         return;
 
     if (decompressedSize == 0)                              // erase
@@ -823,10 +833,12 @@ void WorldSession::HandleUpdateAccountData(WorldPacket& recv_data)
     dest.resize(decompressedSize);
 
     uLongf realSize = decompressedSize;
-    if (uncompress(const_cast<uint8*>(dest.contents()), &realSize, const_cast<uint8*>(recv_data.contents() + recv_data.rpos()), recv_data.size() - recv_data.rpos()) != Z_OK)
+    const uint32 compressedSize = uint32(recv_data.size() - recv_data.rpos());
+    const int decompressResult = uncompress(const_cast<uint8*>(dest.contents()), &realSize, const_cast<uint8*>(recv_data.contents() + recv_data.rpos()), compressedSize);
+    if (decompressResult != Z_OK)
     {
         recv_data.rpos(recv_data.wpos());                   // unneded warning spam in this case
-        sLog.outError("UAD: Failed to decompress account data");
+        sLog.outError("UAD: Failed to decompress account data (account=%u type=%u compressed=%u expected=%u zlib=%d)", GetAccountId(), type, compressedSize, decompressedSize, decompressResult);
         return;
     }
 
@@ -847,7 +859,7 @@ void WorldSession::HandleRequestAccountData(WorldPacket& recv_data)
 
     DEBUG_LOG("RAD: type %u", type);
 
-    if (type > NUM_ACCOUNT_DATA_TYPES)
+    if (type >= NUM_ACCOUNT_DATA_TYPES)
         return;
 
     AccountData* adata = GetAccountData(AccountDataType(type));

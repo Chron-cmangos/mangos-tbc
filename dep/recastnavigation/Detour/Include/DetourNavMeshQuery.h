@@ -515,6 +515,7 @@ public:
 	/// Gets the node pool.
 	/// @returns The node pool.
 	class dtNodePool* getNodePool() const { return m_nodePool; }
+	unsigned int getMemoryBytes() const;
 	
 	/// Gets the navigation mesh the query object is using.
 	/// @return The navigation mesh the query object is using.

@@ -71,7 +71,7 @@ namespace MaNGOS
             {
                 if (!m_acceptor.is_open())
                     return;
-                
+
                 // socket
                 std::shared_ptr<SocketType> connection = std::make_shared<SocketType>(m_context);
 

@@ -143,7 +143,7 @@ void LoadHelper(CellGuidSet const& guid_set, CellPair& cell, GridRefManager<T>& 
             if (sMapMgr.GetContinentInstanceId(map->GetId(), spawnX, spawnY) != map->GetInstanceId())
                 continue;
         }
-        
+
         T* obj;
         uint32 newGuid = guid;
         if constexpr (std::is_same_v<T, GameObject>)

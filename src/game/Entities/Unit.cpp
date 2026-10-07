@@ -1,3 +1,4 @@
+#include "Util/DevDiagnostics.h"
 /*
  * This file is part of the CMaNGOS Project. See AUTHORS file for Copyright information
  *
@@ -345,6 +346,7 @@ Unit::Unit() :
     m_isMountOverriden(false), m_overridenMountId(0),
     m_hasPeriodicAura(false)
 {
+    ManTech::MemoryLedger::Add(ManTech::MemoryKind::Units, sizeof(Unit));
     m_objectType |= TYPEMASK_UNIT;
     m_objectTypeId = TYPEID_UNIT;
     // 2.3.2 - 0x70
@@ -377,8 +379,6 @@ Unit::Unit() :
     m_transform = 0;
     m_canModifyStats = false;
 
-    for (auto& i : m_spellImmune)
-        i.clear();
     for (auto& i : m_auraModifiersGroup)
     {
         i[BASE_VALUE] = 0.0f;
@@ -454,6 +454,7 @@ Unit::Unit() :
 
 Unit::~Unit()
 {
+    ManTech::MemoryLedger::Remove(ManTech::MemoryKind::Units, sizeof(Unit));
     // set current spells as deletable
     for (auto& m_currentSpell : m_currentSpells)
     {
@@ -641,9 +642,10 @@ void Unit::TriggerHomeEvents()
             me->GetCreatureGroup()->TriggerLinkingEvent(CREATURE_GROUP_EVENT_HOME, this);
         if (me->IsPet())
         {
-            Unit* owner = me->GetOwner();
-            if (!owner->IsAlive() && static_cast<Pet*>(this)->IsGuardian())
-                static_cast<Pet*>(this)->Unsummon(PET_SAVE_REAGENTS);
+            Pet* pet = static_cast<Pet*>(this);
+            Unit* owner = pet->GetOwner();
+            if (pet->IsGuardian() && (!owner || !owner->IsAlive()))
+                pet->Unsummon(PET_SAVE_REAGENTS);
         }
     }
 }
@@ -1577,7 +1579,7 @@ SpellCastResult Unit::CastSpell(Unit* Victim, uint32 spellId, uint32 triggeredFl
         if (triggeredByAura)
             sLog.outError("CastSpell: unknown spell id %i by caster: %s triggered by aura %u (eff %u)", spellId, GetGuidStr().c_str(), triggeredByAura->GetId(), triggeredByAura->GetEffIndex());
         else
-            sLog.outError("CastSpell: unknown spell id %i by caster: %s", spellId, GetGuidStr().c_str());
+            sLog.outError("CastSpell: unknown spell id %i by caster: %s item=%u parent_spell=%u flags=%u", spellId, GetGuidStr().c_str(), castItem ? castItem->GetEntry() : 0, triggeredBy ? triggeredBy->Id : 0, triggeredFlags);
         return SPELL_NOT_FOUND;
     }
 
@@ -1823,7 +1825,7 @@ SpellCastResult Unit::CastSpell(SpellCastArgs& args, uint32 spellId, uint32 trig
         if (triggeredByAura)
             sLog.outError("CastSpell: unknown spell id %i by caster: %s triggered by aura %u (eff %u)", spellId, GetGuidStr().c_str(), triggeredByAura->GetId(), triggeredByAura->GetEffIndex());
         else
-            sLog.outError("CastSpell: unknown spell id %i by caster: %s", spellId, GetGuidStr().c_str());
+            sLog.outError("CastSpell: unknown spell id %i by caster: %s item=%u parent_spell=%u flags=%u", spellId, GetGuidStr().c_str(), castItem ? castItem->GetEntry() : 0, triggeredBy ? triggeredBy->Id : 0, triggeredFlags);
         return SPELL_NOT_FOUND;
     }
 
@@ -4150,7 +4152,6 @@ float Unit::CalculateSpellMissChance(const Unit* victim, SpellSchoolMask schoolM
         return 0.0f;
 
     float chance = 0.0f;
-
 #ifdef ENABLE_MODULES
     if (sModuleMgr.OnCalculateSpellMissChance(this, victim, schoolMask, spell, chance))
         return chance;
@@ -4421,6 +4422,7 @@ uint32 Unit::GetWeaponSkillValue(WeaponAttackType attType, Unit const* target) c
 
 void Unit::_UpdateSpells(uint32 time)
 {
+    MANTECH_DIAG_SCOPE(Auras,32,nullptr);
 #ifdef BUILD_METRICS
     metric::duration<std::chrono::microseconds> meas("unit.update.spells", {
         { "entry", std::to_string(GetEntry()) },
@@ -4847,11 +4849,13 @@ void Unit::DeMorph()
     SetDisplayId(GetNativeDisplayId());
 }
 
+// Scalar reads do not expose a list reference or mutate auras. Avoid creating
+// an empty per-unit list solely to calculate a neutral result.
 int32 Unit::GetTotalAuraModifier(AuraType auratype) const
 {
     int32 modifier = 0;
 
-    AuraList const& mTotalAuraList = GetAurasByType(auratype);
+    AuraList const& mTotalAuraList = m_modAuras[auratype];
     for (auto i : mTotalAuraList)
         modifier += i->GetModifier()->m_amount;
 
@@ -4862,7 +4866,7 @@ float Unit::GetTotalAuraMultiplier(AuraType auratype) const
 {
     float multiplier = 1.0f;
 
-    AuraList const& mTotalAuraList = GetAurasByType(auratype);
+    AuraList const& mTotalAuraList = m_modAuras[auratype];
     for (auto i : mTotalAuraList)
         multiplier *= (100.0f + i->GetModifier()->m_amount) / 100.0f;
 
@@ -4873,7 +4877,7 @@ int32 Unit::GetMaxPositiveAuraModifier(AuraType auratype) const
 {
     int32 modifier = 0;
 
-    AuraList const& mTotalAuraList = GetAurasByType(auratype);
+    AuraList const& mTotalAuraList = m_modAuras[auratype];
     for (auto i : mTotalAuraList)
         if (i->GetModifier()->m_amount > modifier)
             modifier = i->GetModifier()->m_amount;
@@ -4885,7 +4889,7 @@ int32 Unit::GetMaxNegativeAuraModifier(AuraType auratype) const
 {
     int32 modifier = 0;
 
-    AuraList const& mTotalAuraList = GetAurasByType(auratype);
+    AuraList const& mTotalAuraList = m_modAuras[auratype];
     for (auto i : mTotalAuraList)
         if (i->GetModifier()->m_amount < modifier)
             modifier = i->GetModifier()->m_amount;
@@ -4900,7 +4904,7 @@ int32 Unit::GetTotalAuraModifierByMiscMask(AuraType auratype, uint32 misc_mask) 
 
     int32 modifier = 0;
 
-    AuraList const& mTotalAuraList = GetAurasByType(auratype);
+    AuraList const& mTotalAuraList = m_modAuras[auratype];
     for (auto i : mTotalAuraList)
     {
         Modifier* mod = i->GetModifier();
@@ -4917,7 +4921,7 @@ float Unit::GetTotalAuraMultiplierByMiscMask(AuraType auratype, uint32 misc_mask
 
     float multiplier = 1.0f;
 
-    AuraList const& mTotalAuraList = GetAurasByType(auratype);
+    AuraList const& mTotalAuraList = m_modAuras[auratype];
     for (auto i : mTotalAuraList)
     {
         Modifier* mod = i->GetModifier();
@@ -4934,7 +4938,7 @@ int32 Unit::GetMaxPositiveAuraModifierByMiscMask(AuraType auratype, uint32 misc_
 
     int32 modifier = 0;
 
-    AuraList const& mTotalAuraList = GetAurasByType(auratype);
+    AuraList const& mTotalAuraList = m_modAuras[auratype];
     for (auto i : mTotalAuraList)
     {
         Modifier* mod = i->GetModifier();
@@ -4952,7 +4956,7 @@ int32 Unit::GetMaxNegativeAuraModifierByMiscMask(AuraType auratype, uint32 misc_
 
     int32 modifier = 0;
 
-    AuraList const& mTotalAuraList = GetAurasByType(auratype);
+    AuraList const& mTotalAuraList = m_modAuras[auratype];
     for (auto i : mTotalAuraList)
     {
         Modifier* mod = i->GetModifier();
@@ -4967,7 +4971,7 @@ int32 Unit::GetTotalAuraModifierByMiscValue(AuraType auratype, int32 misc_value)
 {
     int32 modifier = 0;
 
-    AuraList const& mTotalAuraList = GetAurasByType(auratype);
+    AuraList const& mTotalAuraList = m_modAuras[auratype];
     for (auto i : mTotalAuraList)
     {
         Modifier* mod = i->GetModifier();
@@ -4981,7 +4985,7 @@ float Unit::GetTotalAuraMultiplierByMiscValue(AuraType auratype, int32 misc_valu
 {
     float multiplier = 1.0f;
 
-    AuraList const& mTotalAuraList = GetAurasByType(auratype);
+    AuraList const& mTotalAuraList = m_modAuras[auratype];
     for (auto i : mTotalAuraList)
     {
         Modifier* mod = i->GetModifier();
@@ -4995,7 +4999,7 @@ int32 Unit::GetMaxPositiveAuraModifierByMiscValue(AuraType auratype, int32 misc_
 {
     int32 modifier = 0;
 
-    AuraList const& mTotalAuraList = GetAurasByType(auratype);
+    AuraList const& mTotalAuraList = m_modAuras[auratype];
     for (auto i : mTotalAuraList)
     {
         Modifier* mod = i->GetModifier();
@@ -5010,7 +5014,7 @@ int32 Unit::GetMaxNegativeAuraModifierByMiscValue(AuraType auratype, int32 misc_
 {
     int32 modifier = 0;
 
-    AuraList const& mTotalAuraList = GetAurasByType(auratype);
+    AuraList const& mTotalAuraList = m_modAuras[auratype];
     for (auto i : mTotalAuraList)
     {
         Modifier* mod = i->GetModifier();
@@ -5025,7 +5029,7 @@ int32 Unit::GetMaxPositiveAuraModifierByItemClass(AuraType auratype, Item* weapo
 {
     int32 modifier = 0;
 
-    AuraList const& mTotalAuraList = GetAurasByType(auratype);
+    AuraList const& mTotalAuraList = m_modAuras[auratype];
     for (auto i : mTotalAuraList)
     {
         Modifier* mod = i->GetModifier();
@@ -5234,7 +5238,7 @@ bool Unit::AddSpellAuraHolder(SpellAuraHolder* holder)
 void Unit::AddAuraToModList(Aura* aura)
 {
     if (aura->GetModifier()->m_auraname < TOTAL_AURAS)
-        m_modAuras[aura->GetModifier()->m_auraname].push_back(aura);
+        m_modAuras.Mutable(aura->GetModifier()->m_auraname).push_back(aura);
 }
 
 void Unit::RemoveRankAurasDueToSpell(uint32 spellId)
@@ -5468,8 +5472,7 @@ void Unit::RemoveAurasDueToSpellBySteal(SpellAuraHolder* holder, Unit* stealer)
     // max duration 2 minutes (in msecs)
     int32 dur = holder->GetAuraDuration();
     int32 max_dur = 2 * MINUTE * IN_MILLISECONDS;
-    // permanent auras (duration -1) must also be capped
-    int32 new_max_dur = (dur >= 0 && dur < max_dur) ? dur : max_dur;
+    int32 new_max_dur = max_dur > dur ? dur : max_dur;
     new_holder->SetAuraMaxDuration(new_max_dur);
     new_holder->SetAuraDuration(new_max_dur);
 
@@ -5779,7 +5782,7 @@ void Unit::RemoveSpellAuraHolder(SpellAuraHolder* holder, AuraRemoveMode mode)
     holder->_RemoveSpellAuraHolder();
 
     if (mode != AURA_REMOVE_BY_DELETE)
-        holder->HandleSpellSpecificBoosts(false, mode);
+        holder->HandleSpellSpecificBoosts(false);
 
     if (statue)
         statue->UnSummon();
@@ -5825,7 +5828,7 @@ void Unit::RemoveAura(Aura* Aur, AuraRemoveMode mode)
     // remove from list before mods removing (prevent cyclic calls, mods added before including to aura list - use reverse order)
     if (Aur->GetModifier()->m_auraname < TOTAL_AURAS)
     {
-        m_modAuras[Aur->GetModifier()->m_auraname].remove(Aur);
+        m_modAuras.Mutable(Aur->GetModifier()->m_auraname).remove(Aur);
     }
 
     // Set remove mode
@@ -5970,7 +5973,7 @@ void Unit::_ApplyAllAuraMods()
 
 bool Unit::HasAuraType(AuraType auraType) const
 {
-    return !GetAurasByType(auraType).empty();
+    return !m_modAuras[auraType].empty();
 }
 
 bool Unit::HasAffectedAura(AuraType auraType, SpellEntry const* spellProto) const
@@ -6277,26 +6280,28 @@ void Unit::RemoveGameObject(uint32 spellid, bool del)
 
 void Unit::RemoveAllGameObjects()
 {
-    // wild summoned GOs - only remove references, do not remove GOs
-    m_gameObj.clear();
+    // Owned objects must lose their owner before the unit leaves the map.
+    // Wild summons have independent lifetimes and only lose tracking here.
+    RemoveGameObject(uint32(0), true);
     m_wildGameObjs.clear();
 }
 
 void Unit::AddCreature(uint32 spellId, Creature* creature)
 {
-    m_creatures.emplace(spellId, creature);
+    m_creatures.Get().emplace(spellId, creature);
 }
 
 void Unit::RemoveCreature(uint32 spellId, bool del)
 {
     if (del)
     {
-        auto itr = m_creatures.find(spellId);
-        if (itr != m_creatures.end())
+        auto const& creatures = m_creatures.Read();
+        auto itr = creatures.find(spellId);
+        if (itr != creatures.end())
             itr->second->ForcedDespawn();
     }
 
-    m_creatures.erase(spellId);
+    m_creatures.Get().erase(spellId);
 }
 
 void Unit::SendSpellNonMeleeDamageLog(SpellNonMeleeDamage* log)
@@ -7387,9 +7392,10 @@ int32 Unit::DealHeal(Unit* pVictim, uint32 addhealth, SpellEntry const* spellPro
     // Script Event HealedBy
     if (pVictim->AI())
         pVictim->AI()->HealedBy(this, addhealth);
+
 #ifdef ENABLE_MODULES
     sModuleMgr.OnDealHeal(unit, pVictim, gain, addhealth);
-#endif    
+#endif
 
     return gain;
 }
@@ -7859,13 +7865,13 @@ int32 Unit::SpellBaseHealingBonusTaken(SpellSchoolMask schoolMask) const
 bool Unit::IsImmuneToDamage(SpellSchoolMask shoolMask)
 {
     // If m_immuneToSchool type contain this school type, IMMUNE damage.
-    SpellImmuneList const& schoolList = m_spellImmune[IMMUNITY_SCHOOL];
+    SpellImmuneList const& schoolList = m_spellImmune.Read(IMMUNITY_SCHOOL);
     for (auto itr : schoolList)
         if (itr.type & shoolMask)
             return true;
 
     // If m_immuneToDamage type contain magic, IMMUNE damage.
-    SpellImmuneList const& damageList = m_spellImmune[IMMUNITY_DAMAGE];
+    SpellImmuneList const& damageList = m_spellImmune.Read(IMMUNITY_DAMAGE);
     for (auto itr : damageList)
         if (itr.type & shoolMask)
             return true;
@@ -7879,9 +7885,9 @@ bool Unit::IsImmuneToSpell(SpellEntry const* spellInfo, bool /*castOnSelf*/, uin
         return false;
 
     // TODO add spellEffect immunity checks!, player with flag in bg is immune to immunity buffs from other friendly players!
-    // SpellImmuneList const& dispelList = m_spellImmune[IMMUNITY_EFFECT];
+    // SpellImmuneList const& dispelList = m_spellImmune.Read(IMMUNITY_EFFECT);
 
-    SpellImmuneList const& dispelList = m_spellImmune[IMMUNITY_DISPEL];
+    SpellImmuneList const& dispelList = m_spellImmune.Read(IMMUNITY_DISPEL);
     for (auto itr : dispelList)
         if (itr.type == spellInfo->Dispel)
             return true;
@@ -7895,7 +7901,7 @@ bool Unit::IsImmuneToSpell(SpellEntry const* spellInfo, bool /*castOnSelf*/, uin
             if (spellInfo->HasAttribute(SPELL_ATTR_EX4_AURA_IS_BUFF))
                 isPositive = true;
         }
-        SpellImmuneList const& schoolList = m_spellImmune[IMMUNITY_SCHOOL];
+        SpellImmuneList const& schoolList = m_spellImmune.Read(IMMUNITY_SCHOOL);
         for (auto itr : schoolList)
             if ((itr.type & GetSpellSchoolMask(spellInfo)) && !(itr.aura && itr.aura->IsPositive() && isPositive) && !CanPierceImmuneAura(spellInfo, itr.aura ? itr.aura->GetSpellProto() : nullptr, effectMask, itr.aura ? itr.aura->GetEffIndex() : EFFECT_INDEX_0))
                 return true;
@@ -7903,7 +7909,7 @@ bool Unit::IsImmuneToSpell(SpellEntry const* spellInfo, bool /*castOnSelf*/, uin
 
     if (uint32 mechanic = spellInfo->Mechanic)
     {
-        SpellImmuneList const& mechanicList = m_spellImmune[IMMUNITY_MECHANIC];
+        SpellImmuneList const& mechanicList = m_spellImmune.Read(IMMUNITY_MECHANIC);
         for (auto itr : mechanicList)
             if (itr.type == mechanic)
                 return true;
@@ -7924,14 +7930,14 @@ bool Unit::IsImmuneToSpellEffect(SpellEntry const* spellInfo, SpellEffectIndex i
 
     // If m_immuneToEffect type contain this effect type, IMMUNE effect.
     uint32 effect = spellInfo->Effect[index];
-    SpellImmuneList const& effectList = m_spellImmune[IMMUNITY_EFFECT];
+    SpellImmuneList const& effectList = m_spellImmune.Read(IMMUNITY_EFFECT);
     for (auto itr : effectList)
         if (itr.type == effect)
             return true;
 
     if (uint32 mechanic = spellInfo->EffectMechanic[index])
     {
-        SpellImmuneList const& mechanicList = m_spellImmune[IMMUNITY_MECHANIC];
+        SpellImmuneList const& mechanicList = m_spellImmune.Read(IMMUNITY_MECHANIC);
         for (auto itr : mechanicList)
             if (itr.type == mechanic)
                 return true;
@@ -7944,7 +7950,7 @@ bool Unit::IsImmuneToSpellEffect(SpellEntry const* spellInfo, SpellEffectIndex i
 
     if (uint32 aura = spellInfo->EffectApplyAuraName[index])
     {
-        SpellImmuneList const& list = m_spellImmune[IMMUNITY_STATE];
+        SpellImmuneList const& list = m_spellImmune.Read(IMMUNITY_STATE);
         for (auto itr : list)
             if (itr.type == aura)
                 return true;
@@ -7954,7 +7960,7 @@ bool Unit::IsImmuneToSpellEffect(SpellEntry const* spellInfo, SpellEffectIndex i
 
 bool Unit::IsImmuneToSchool(SpellEntry const* spellInfo, uint8 effectMask) const
 {
-    SpellImmuneList const& schoolList = m_spellImmune[IMMUNITY_SCHOOL];
+    SpellImmuneList const& schoolList = m_spellImmune.Read(IMMUNITY_SCHOOL);
     for (auto itr : schoolList)
     {
         if (itr.aura && itr.aura->GetSpellProto() == spellInfo) // do not let itself immune out - fixes 39872 - Tidal Shield
@@ -8828,7 +8834,9 @@ void Unit::UpdateVisibilityAndView()
     static const AuraType auratypes[] = {SPELL_AURA_BIND_SIGHT, SPELL_AURA_FAR_SIGHT, SPELL_AURA_NONE};
     for (AuraType const* type = &auratypes[0]; *type != SPELL_AURA_NONE; ++type)
     {
-        AuraList& alist = m_modAuras[*type];
+        if (m_modAuras[*type].empty())
+            continue;
+        AuraList& alist = m_modAuras.Mutable(*type);
         if (alist.empty())
             continue;
 
@@ -9964,7 +9972,7 @@ void Unit::ApplyMaxPowerMod(Powers power, uint32 val, bool apply)
 
 void Unit::ApplyAuraProcTriggerDamage(Aura* aura, bool apply)
 {
-    AuraList& tAuraProcTriggerDamage = m_modAuras[SPELL_AURA_PROC_TRIGGER_DAMAGE];
+    AuraList& tAuraProcTriggerDamage = m_modAuras.Mutable(SPELL_AURA_PROC_TRIGGER_DAMAGE);
     if (apply)
         tAuraProcTriggerDamage.push_back(aura);
     else
@@ -12479,7 +12487,7 @@ void Unit::UpdateAllowedPositionZ(float x, float y, float& z, Map* atMap /*=null
     if (!CanFly())
     {
         bool canSwim = CanSwim();
-        float groundZ = GetMap()->GetHeight(x, y, z, canSwim), maxZ;
+        float groundZ = atMap->GetHeight(x, y, z, canSwim), maxZ;
         if (canSwim)
             maxZ = atMap->GetTerrain()->GetWaterOrGroundLevel(x, y, z, groundZ, !HasAuraType(SPELL_AURA_WATER_WALK), GetCollisionHeight());
         else
@@ -12648,21 +12656,23 @@ Player* Unit::GetNextRandomRaidMember(float radius, AuraType /*noAuraType*/)
 
 bool Unit::HasOverrideScript(uint32 id) const
 {
-    return m_classScripts.find(id) != m_classScripts.end();
+    auto const& scripts = m_classScripts.Read();
+    return scripts.find(id) != scripts.end();
 }
 
 Aura* Unit::GetOverrideScript(uint32 id) const
 {
-    auto itr = m_classScripts.find(id);
-    return itr == m_classScripts.end() ? nullptr : (*itr).second;
+    auto const& scripts = m_classScripts.Read();
+    auto itr = scripts.find(id);
+    return itr == scripts.end() ? nullptr : (*itr).second;
 }
 
 void Unit::RegisterOverrideScriptAura(Aura* aura, uint32 id, bool apply)
 {
     if (apply)
-        m_classScripts.insert({ id, aura });
+        m_classScripts.Get().insert({ id, aura });
     else
-        m_classScripts.erase(id);
+        m_classScripts.Get().erase(id);
 }
 
 void Unit::RegisterScriptedLocationAura(Aura* aura, AuraScriptLocation location, bool apply)

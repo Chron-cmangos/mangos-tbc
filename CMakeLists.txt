@@ -33,6 +33,9 @@ set(CMAKE_CXX_STANDARD 20)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
 set(CMAKE_CXX_EXTENSIONS OFF)
 
+option(MANTECH_DEV_DIAGNOSTICS "Bounded DEV runtime diagnostics" OFF)
+
+
 # Define here name of the binaries
 set(CMANGOS_BINARY_SERVER_NAME "mangosd")
 set(CMANGOS_BINARY_REALMD_NAME "realmd")
@@ -88,42 +91,28 @@ if(MSVC)
 endif()
 
 # Modules setup
+include(cmake/mantech_baseline.cmake)
 if(BUILD_MODULES)
-  # Download module config file
-  include(FetchContent)
-
-  FetchContent_Declare(
-    modules
-    GIT_REPOSITORY "https://github.com/Chron-cmangos/cmangos-modules.git"
-    GIT_TAG "main"
-  )
-
-  if(NOT modules_POPULATED)
-	message(STATUS "Fetching module configuration...")
-    FetchContent_Populate(modules)
-
-    if(EXISTS ${CMAKE_SOURCE_DIR}/src/modules/modules)
-      file(REMOVE_RECURSE ${CMAKE_SOURCE_DIR}/src/modules/modules)
-    endif()
-
-    file(COPY ${modules_SOURCE_DIR}/. DESTINATION ${CMAKE_SOURCE_DIR}/src/modules/modules)
-    message(STATUS "Modules configuration fetched and populated in ${CMAKE_CURRENT_SOURCE_DIR}/src/modules/modules")
-
-    # Read module config file
-    file(READ ${CMAKE_SOURCE_DIR}/src/modules/modules/modules.conf MODULE_CONF)
-    string(REGEX REPLACE "\n" ";" MODULE_CONF_LINES "${MODULE_CONF}")
-    set(MODULE_NAMES)
-    set(MODULE_URLS)
-    foreach(MODULE_CONF_LINE ${MODULE_CONF_LINES})
-      string(REGEX MATCH "([^=]+)=(.*)" _ ${MODULE_CONF_LINE})
-      set(KEY ${CMAKE_MATCH_1})
-      set(VALUE ${CMAKE_MATCH_2})
-      if(NOT KEY STREQUAL "" OR NOT VALUE STREQUAL "")
-        list(APPEND MODULE_NAMES ${KEY})
-        list(APPEND MODULE_URLS ${VALUE})
-      endif()
-    endforeach()
+  # Keep the module framework and selected modules in-tree. This makes builds
+  # reproducible and prevents a moving upstream branch from changing the server.
+  set(MODULE_CONFIG_FILE ${CMAKE_SOURCE_DIR}/src/modules/modules/modules.conf)
+  if(NOT EXISTS ${MODULE_CONFIG_FILE})
+    message(FATAL_ERROR "BUILD_MODULES requires the vendored module framework")
   endif()
+
+  file(READ ${MODULE_CONFIG_FILE} MODULE_CONF)
+  string(REGEX REPLACE "\n" ";" MODULE_CONF_LINES "${MODULE_CONF}")
+  set(MODULE_NAMES)
+  set(MODULE_URLS)
+  foreach(MODULE_CONF_LINE ${MODULE_CONF_LINES})
+    string(REGEX MATCH "([^=]+)=(.*)" _ ${MODULE_CONF_LINE})
+    set(KEY ${CMAKE_MATCH_1})
+    set(VALUE ${CMAKE_MATCH_2})
+    if(NOT KEY STREQUAL "" OR NOT VALUE STREQUAL "")
+      list(APPEND MODULE_NAMES ${KEY})
+      list(APPEND MODULE_URLS ${VALUE})
+    endif()
+  endforeach()
 endif()
 
 # set default buildoptions and print them
@@ -386,12 +375,6 @@ if(BUILD_MODULES AND NOT BUILD_GAME_SERVER)
   message(STATUS "BUILD_MODULES forced to OFF due to BUILD_GAME_SERVER is not set")
 endif()
 
-if(NOT BUILD_MODULES)
-  if(EXISTS ${CMAKE_SOURCE_DIR}/src/modules/modules)
-    file(REMOVE_RECURSE ${CMAKE_SOURCE_DIR}/src/modules/modules)
-  endif()
-endif()
-
 if(PCH)
   if(${CMAKE_VERSION} VERSION_LESS "3.16")
     message("PCH is not supported by your CMake version")
@@ -444,6 +427,15 @@ if(UNIX)
   add_compile_definitions(SYSCONFDIR="../${CONF_FOLDER_NAME}/")
 endif()
 
+if(MANTECH_DEV_DIAGNOSTICS)
+  if(NOT WIN32)
+    message(FATAL_ERROR "DEV diagnostics currently require Windows")
+  endif()
+  add_compile_definitions(MANTECH_DEV_DIAGNOSTICS)
+endif()
+
+include(cmake/Arch4Allocator.cmake)
+
 if(BUILD_GAME_SERVER OR BUILD_LOGIN_SERVER OR BUILD_EXTRACTORS)
   add_subdirectory(src)
 endif()
@@ -493,3 +485,9 @@ endif()
 # if(SQL)
 #   add_subdirectory(sql)
 # endif()
+
+option(MANTECH_BUILD_ARCH4_TESTS "Build native Arch 4 regression tests" OFF)
+if(MANTECH_BUILD_ARCH4_TESTS AND BUILD_GAME_SERVER)
+  enable_testing()
+  add_subdirectory(tests/arch4)
+endif()

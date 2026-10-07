@@ -23,6 +23,7 @@
 #include <G3D/AABox.h>
 #include <G3D/Ray.h>
 #include "BIH.h"
+#include "Memory/MemoryLedger.h"
 
 #include "Platform/Define.h"
 
@@ -56,6 +57,7 @@ namespace VMAP
             uint32 GetType() const { return iType; }
             float* GetHeightStorage() const { return iHeight; }
             uint8* GetFlagsStorage() const { return iFlags; }
+            std::size_t MemoryBytes() const { return sizeof(*this) + (iHeight ? (std::size_t(iTilesX)+1)*(std::size_t(iTilesY)+1)*sizeof(float) : 0) + (iFlags ? std::size_t(iTilesX)*iTilesY : 0); }
             uint32 GetFileSize() const;
             bool writeToFile(FILE* wf);
             static bool readFromFile(FILE* rf, WmoLiquid*& out);
@@ -82,6 +84,7 @@ namespace VMAP
             GroupModel(uint32 mogpFlags, uint32 groupWMOID, const AABox& bound):
                 iBound(bound), iMogpFlags(mogpFlags), iGroupWMOID(groupWMOID), iLiquid(nullptr) {}
             ~GroupModel() { delete iLiquid; }
+            std::size_t DynamicBytes() const { return vertices.capacity()*sizeof(Vector3)+triangles.capacity()*sizeof(MeshTriangle)+meshTree.DynamicBytes()+(iLiquid ? iLiquid->MemoryBytes() : 0); }
 
             //! pass mesh data to object and create BIH. Passed vectors get get swapped with old geometry!
             void setMeshData(std::vector<Vector3>& vert, std::vector<MeshTriangle>& tri);
@@ -114,6 +117,15 @@ namespace VMAP
     {
         public:
             WorldModel(): RootWMOID(0), modelFlags(0) {}
+            WorldModel(WorldModel const&) = delete;
+            WorldModel& operator=(WorldModel const&) = delete;
+            ~WorldModel() { if (m_accountedBytes) ManTech::MemoryLedger::Remove(ManTech::MemoryKind::Collision,m_accountedBytes); }
+            void AccountMemory() {
+                if (m_accountedBytes) return;
+                m_accountedBytes=sizeof(*this)+groupModels.capacity()*sizeof(GroupModel)+groupTree.DynamicBytes();
+                for (auto const& group:groupModels) m_accountedBytes+=group.DynamicBytes();
+                ManTech::MemoryLedger::Add(ManTech::MemoryKind::Collision,m_accountedBytes);
+            }
 
             //! pass group models to WorldModel and create BIH. Passed vector is swapped with old geometry!
             void setGroupModels(std::vector<GroupModel>& models);
@@ -126,6 +138,7 @@ namespace VMAP
             void setModelFlags(uint32 newFlags) { modelFlags = newFlags; }
             uint32 getModelFlags() const { return modelFlags; }
         protected:
+            std::size_t m_accountedBytes = 0;
             uint32 RootWMOID;
             std::vector<GroupModel> groupModels;
             BIH groupTree;

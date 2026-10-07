@@ -988,6 +988,8 @@ ChatCommand* ChatHandler::getCommandTable()
         { "reset",          SEC_ADMINISTRATOR,  true,  nullptr,                                        "", resetCommandTable    },
         { "server",         SEC_PLAYER,         true,  nullptr,                                        "", serverCommandTable   },
         { "tele",           SEC_MODERATOR,      true,  nullptr,                                        "", teleCommandTable     },
+        // Preserve the native .t abbreviation for GM teleports.
+        { "tp",             SEC_PLAYER,         false, &ChatHandler::HandlePlayerTravelCommand,        "", nullptr },
         { "titles",         SEC_GAMEMASTER,     false, nullptr,                                        "", titlesCommandTable   },
         { "trigger",        SEC_GAMEMASTER,     false, nullptr,                                        "", triggerCommandTable  },
         { "wp",             SEC_GAMEMASTER,     false, nullptr,                                        "", wpCommandTable       },

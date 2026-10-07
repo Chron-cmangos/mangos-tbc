@@ -1029,6 +1029,7 @@ class GameObject : public WorldObject
         time_t m_reStockTimer;                              // timer to refill the chest
         TimePoint m_despawnTimer;                           // timer to despawn the chest if something changed in it
 
+        bool CanCompleteSoloRitual() const;
         void TriggerSummoningRitual();
         void TriggerDelayedAction();
 

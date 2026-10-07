@@ -16,6 +16,7 @@
  * Foundation, Inc., 59 Temple Place, Suite 330, Boston, MA  02111-1307  USA
  */
 
+#include "Entities/PortableRepairVendor.h"
 #include "Common.h"
 #include "Database/DatabaseEnv.h"
 #include "Server/WorldPacket.h"
@@ -4556,6 +4557,8 @@ void Spell::EffectAddFarsight(SpellEffectIndex eff_idx)
 bool Spell::DoSummonWild(CreatureSummonPositions& list, SummonPropertiesEntry const* prop, SpellEffectIndex effIdx, uint32 level)
 {
     uint32 creature_entry = m_spellInfo->EffectMiscValue[effIdx];
+    creature_entry = PortableRepairVendor::ResolveSummonEntry(
+        m_CastItem ? m_CastItem->GetEntry() : 0, m_spellInfo->Id, creature_entry);
     CreatureInfo const* cInfo = ObjectMgr::GetCreatureTemplate(creature_entry);
     if (!cInfo)
     {

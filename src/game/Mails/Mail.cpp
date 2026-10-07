@@ -312,6 +312,21 @@ void MailDraft::SendMailTo(MailReceiver const& receiver, MailSender const& sende
     std::string safe_subject = GetSubject();
 
     CharacterDatabase.BeginTransaction();
+    if (m_returnSourceMailId)
+    {
+        CharacterDatabase.PExecute("DELETE FROM mail WHERE id = '%u'", m_returnSourceMailId);
+        CharacterDatabase.PExecute("DELETE FROM mail_items WHERE mail_id = '%u'", m_returnSourceMailId);
+    }
+    if (!m_grantKey.empty())
+    {
+        for (MailItemMap::const_iterator mailItemIter = m_items.begin(); mailItemIter != m_items.end(); ++mailItemIter)
+            mailItemIter->second->SaveToDB();
+
+        std::string safeGrantKey = m_grantKey;
+        CharacterDatabase.escape_string(safeGrantKey);
+        CharacterDatabase.PExecute("INSERT INTO mantech_character_grants (guid, grant_key, mail_id, granted_at) VALUES ('%u', '%s', '%u', " _UNIXTIME_ ")",
+                                   receiver.GetPlayerGuid().GetCounter(), safeGrantKey.c_str(), mailId);
+    }
     CharacterDatabase.escape_string(safe_subject);
     CharacterDatabase.PExecute("INSERT INTO mail (id,messageType,stationery,mailTemplateId,sender,receiver,subject,itemTextId,has_items,expire_time,deliver_time,money,cod,checked) "
                                "VALUES ('%u', '%u', '%u', '%u', '%u', '%u', '%s', '%u', '%u', '" UI64FMTD "','" UI64FMTD "', '%u', '%u', '%u')",
@@ -323,7 +338,10 @@ void MailDraft::SendMailTo(MailReceiver const& receiver, MailSender const& sende
         CharacterDatabase.PExecute("INSERT INTO mail_items (mail_id,item_guid,item_template,receiver) VALUES ('%u', '%u', '%u','%u')",
                                    mailId, item->GetGUIDLow(), item->GetEntry(), receiver.GetPlayerGuid().GetCounter());
     }
-    CharacterDatabase.CommitTransaction();
+    if (m_grantKey.empty())
+        CharacterDatabase.CommitTransaction();
+    else
+        CharacterDatabase.CommitTransactionDirect();
 
     // For online receiver update in game mail status and data
     if (pReceiver)

@@ -51,6 +51,7 @@ class SqlDelayThread : public MaNGOS::Runnable
         ///< Put sql statement to delay queue
         bool Delay(SqlOperation* sql, bool highPriority = false)
         {
+            sql->TrackMemory();
             std::lock_guard<std::mutex> guard(m_queueMutex);
             if (highPriority)
                 m_prioritySqlQueue.push(std::unique_ptr<SqlOperation>(sql));

@@ -518,8 +518,9 @@ void WorldSession::HandlePetitionSignOpcode(WorldPacket& recv_data)
     // client doesn't allow to sign petition two times by one character, but not check sign by another character from same account
     // not allow sign another player from already sign player account
 #ifdef ENABLE_PLAYERBOTS
-    if (!_player->GetPlayerbotAI())
-    {
+    if (_player->GetPlayerbotAI())
+        queryResult = CharacterDatabase.PQuery("SELECT playerguid FROM petition_sign WHERE playerguid = '%u' AND petitionguid = '%u'", _player->GetGUIDLow(), petitionLowGuid);
+    else
 #endif
     queryResult = CharacterDatabase.PQuery("SELECT playerguid FROM petition_sign WHERE player_account = '%u' AND petitionguid = '%u'", GetAccountId(), petitionLowGuid);
 
@@ -538,11 +539,8 @@ void WorldSession::HandlePetitionSignOpcode(WorldPacket& recv_data)
             owner->GetSession()->SendPacket(data);
         return;
     }
-#ifdef ENABLE_PLAYERBOTS
-    }
-#endif
 
-    CharacterDatabase.PExecute("INSERT INTO petition_sign (ownerguid,petitionguid, playerguid, player_account) VALUES ('%u', '%u', '%u','%u')",
+    CharacterDatabase.PExecute("INSERT INTO petition_sign (ownerguid,petitionguid, playerguid, player_account) VALUES ('%u', '%u', '%u','%u') ON DUPLICATE KEY UPDATE playerguid = VALUES(playerguid)",
                                ownerLowGuid, petitionLowGuid, _player->GetGUIDLow(), GetAccountId());
 
     DEBUG_LOG("PETITION SIGN: %s by %s", petitionGuid.GetString().c_str(), _player->GetGuidStr().c_str());

@@ -16,6 +16,8 @@
  * Foundation, Inc., 59 Temple Place, Suite 330, Boston, MA  02111-1307  USA
  */
 
+#include "Memory/MemoryLedger.h"
+#include "Memory/EntityLedger.h"
 #include "Entities/Object.h"
 #include "Globals/SharedDefines.h"
 #include "Server/WorldPacket.h"
@@ -45,6 +47,27 @@
 #include "Spells/SpellMgr.h"
 #include "MotionGenerators/PathFinder.h"
 
+namespace
+{
+void RecordEntityType(unsigned type, bool created)
+{
+    ManTech::EntityKind kind;
+    switch (type)
+    {
+        case TYPEID_PLAYER: kind = ManTech::EntityKind::Players; break;
+        case TYPEID_UNIT: kind = ManTech::EntityKind::Creatures; break;
+        case TYPEID_ITEM:
+        case TYPEID_CONTAINER: kind = ManTech::EntityKind::Items; break;
+        case TYPEID_GAMEOBJECT: kind = ManTech::EntityKind::GameObjects; break;
+        case TYPEID_CORPSE: kind = ManTech::EntityKind::Corpses; break;
+        case TYPEID_DYNAMICOBJECT: kind = ManTech::EntityKind::DynamicObjects; break;
+        default: return;
+    }
+    if (created) ManTech::EntityLedger::Add(kind);
+    else ManTech::EntityLedger::Remove(kind);
+}
+}
+
 Object::Object(): m_updateFlag(0), m_itsNewObject(false), m_dbGuid(0), m_scriptRef(this, NoopObjectDeleter())
 {
     m_objectTypeId      = TYPEID_OBJECT;
@@ -73,6 +96,11 @@ Object::~Object()
         MANGOS_ASSERT(false);
     }
 
+    if (m_uint32Values)
+    {
+        RecordEntityType(GetTypeId(), false);
+        ManTech::MemoryLedger::Remove(ManTech::MemoryKind::UpdateFields, m_valuesCount * sizeof(uint32));
+    }
     delete[] m_uint32Values;
 
     delete m_loot;
@@ -105,6 +133,8 @@ void Object::RemoveFromWorld()
 void Object::_InitValues()
 {
     m_uint32Values = new uint32[ m_valuesCount ];
+    ManTech::MemoryLedger::Add(ManTech::MemoryKind::UpdateFields, m_valuesCount * sizeof(uint32));
+    RecordEntityType(GetTypeId(), true);
     memset(m_uint32Values, 0, m_valuesCount * sizeof(uint32));
 
     m_changedValues.resize(m_valuesCount, false);
@@ -1155,6 +1185,12 @@ bool Object::PrintEntryError(char const* descr) const
 
 void Object::BuildUpdateDataForPlayer(Player* pl, UpdateDataMapType& update_players) const
 {
+#ifdef ENABLE_PLAYERBOTS
+    // Playerbots read live object fields; no bot handler consumes value-update packets.
+    // Keep camera/visibility bookkeeping in the caller and all gameplay packets intact.
+    if (pl->GetSession() && !pl->GetSession()->HasClientSocket())
+        return;
+#endif
     UpdateDataMapType::iterator iter = update_players.find(pl);
 
     if (iter == update_players.end())
@@ -2700,6 +2736,12 @@ void WorldObject::UpdateVisibility(UpdateDataMapType& update_players)
                 itr = m_clientGUIDsIAmAt.erase(itr);
                 continue;
             }
+        }
+        else
+        {
+            // A departed client cannot receive updates on this map.
+            itr = m_clientGUIDsIAmAt.erase(itr);
+            continue;
         }
 
         ++itr;

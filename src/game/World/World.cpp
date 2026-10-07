@@ -1,3 +1,4 @@
+#include "Util/DevDiagnosticsService.h"
 /*
  * This file is part of the CMaNGOS Project. See AUTHORS file for Copyright information
  *
@@ -20,6 +21,12 @@
     \ingroup world
 */
 
+#include "Memory/MemoryLedger.h"
+#include "Memory/AllocationProfile.h"
+#include "Memory/EntityLedger.h"
+#ifdef MANTECH_USE_MIMALLOC
+#include <mimalloc-stats.h>
+#endif
 #include "World/World.h"
 #include "Database/DatabaseEnv.h"
 #include "Config/Config.h"
@@ -68,6 +75,8 @@
 #include "Maps/TransportMgr.h"
 #include "Anticheat/Anticheat.hpp"
 #include "Spells/SpellStacking.h"
+#include "Mails/ManTechPortableUtilityGrant.h"
+#include "revision_sql.h"
 
 #ifdef BUILD_AHBOT
  #include "AuctionHouseBot/AuctionHouseBot.h"
@@ -80,7 +89,12 @@
 #ifdef ENABLE_PLAYERBOTS
 #include "ahbot/AhBot.h"
 #include "playerbot/PlayerbotAIConfig.h"
+#include "playerbot/PlayerbotAI.h"
 #include "playerbot/RandomPlayerbotMgr.h"
+#include "playerbot/BotRecruitment.h"
+#include "playerbot/RandomItemMgr.h"
+#include "playerbot/TravelMgr.h"
+#include "playerbot/strategy/Engine.h"
 #endif
 
 #ifdef ENABLE_MODULES
@@ -91,6 +105,30 @@
 #include <mutex>
 #include <cstdarg>
 #include <memory>
+
+#ifdef _WIN32
+#include <windows.h>
+#include <psapi.h>
+#pragma comment(lib, "Psapi.lib")
+#endif
+
+namespace
+{
+    void GetProcessMemoryMegabytes(uint64& workingSetMb, uint64& privateMb)
+    {
+        workingSetMb = 0;
+        privateMb = 0;
+#ifdef _WIN32
+        PROCESS_MEMORY_COUNTERS_EX counters{};
+        counters.cb = sizeof(counters);
+        if (GetProcessMemoryInfo(GetCurrentProcess(), reinterpret_cast<PROCESS_MEMORY_COUNTERS*>(&counters), sizeof(counters)))
+        {
+            workingSetMb = counters.WorkingSetSize / (1024ULL * 1024ULL);
+            privateMb = counters.PrivateUsage / (1024ULL * 1024ULL);
+        }
+#endif
+    }
+}
 
 INSTANTIATE_SINGLETON_1(World);
 
@@ -633,6 +671,17 @@ void World::LoadConfigSettings(bool reload)
     setConfig(CONFIG_UINT32_NUM_MAP_THREADS, "MapUpdate.Threads", 3);
     setConfigMin(CONFIG_UINT32_MAP_OBJECT_THREADS, "MapUpdate.ObjectThreads", 1, 1);
     setConfigMin(CONFIG_UINT32_MAP_VISIBILITY_CHUNK_SIZE, "MapUpdate.VisibilityChunkSize", 64, 8);
+    setConfig(CONFIG_UINT32_MAP_IDLE_BOT_THREADS, "MapUpdate.IdleBotThreads", 2);
+    setConfigMin(CONFIG_UINT32_MAP_IDLE_BOT_CHUNK_SIZE, "MapUpdate.IdleBotChunkSize", 64, 8);
+    setConfigMin(CONFIG_UINT32_MAP_IDLE_BOT_MAX_UPDATES_PER_TICK, "MapUpdate.IdleBotMaxUpdatesPerTick", 128, 8);
+    setConfigMin(CONFIG_UINT32_MAP_IDLE_BOT_MAX_TIMER_ADVANCE_MS, "MapUpdate.IdleBotMaxTimerAdvanceMs", 250, 1);
+    setConfig(CONFIG_UINT32_MAP_IDLE_BOT_JITTER_MS, "MapUpdate.IdleBotJitterMs", 4000);
+    setConfig(CONFIG_UINT32_MAP_CELL_THREADS, "MapUpdate.CellThreads", 2);
+    setConfigMin(CONFIG_UINT32_MAP_CELL_CHUNK_SIZE, "MapUpdate.CellChunkSize", 64, 8);
+    setConfigMin(CONFIG_UINT32_MAP_CELL_MIN_PARALLEL_CELLS, "MapUpdate.CellMinParallelCells", 128, 1);
+    setConfigMin(CONFIG_UINT32_MAP_CELL_MAX_CHUNKS_PER_MAP, "MapUpdate.CellMaxChunksPerMap", 8, 1);
+    setConfigMin(CONFIG_UINT32_MAP_CELL_MAX_WAIT_MS, "MapUpdate.CellMaxWaitMs", 75, 1);
+    setConfigMin(CONFIG_UINT32_MAP_CELL_FALLBACK_SECONDS, "MapUpdate.CellFallbackSeconds", 30, 1);
     setConfig(CONFIG_BOOL_PERFORMANCE_LOG_ENABLED, "PerformanceLog.Enabled", true);
     setConfigMin(CONFIG_UINT32_PERFORMANCE_LOG_SLOW_WORLD_MS, "PerformanceLog.SlowWorldUpdateMs", 200, 1);
     setConfigMin(CONFIG_UINT32_PERFORMANCE_LOG_SLOW_MAP_MS, "PerformanceLog.SlowMapUpdateMs", 100, 1);
@@ -642,6 +691,7 @@ void World::LoadConfigSettings(bool reload)
     setConfigMin(CONFIG_UINT32_PERFORMANCE_LOG_SLOW_ASYNC_DB_MS, "PerformanceLog.SlowAsyncDbMs", 100, 1);
     setConfigMin(CONFIG_UINT32_PERFORMANCE_LOG_SLOW_DB_CALLBACK_MS, "PerformanceLog.SlowDbCallbackMs", 50, 1);
     setConfigMin(CONFIG_UINT32_PERFORMANCE_LOG_SUMMARY_INTERVAL_MS, "PerformanceLog.SummaryIntervalMs", 60000, 1000);
+    setConfigMin(CONFIG_UINT32_PERFORMANCE_LOG_DETAIL_INTERVAL_MS, "PerformanceLog.DetailIntervalMs", 1000, 100);
     setConfig(CONFIG_BOOL_PLAYERBOT_STAGGER_BACKGROUND_UPDATES, "Playerbot.StaggerBackgroundUpdates", true);
     setConfig(CONFIG_BOOL_ADAPTIVE_LOAD_ENABLED, "AdaptiveLoad.Enabled", true);
     setConfigMin(CONFIG_UINT32_ADAPTIVE_LOAD_EMPTY_MAP_UPDATE_MS, "AdaptiveLoad.EmptyMapUpdateMs", 500, getConfig(CONFIG_UINT32_INTERVAL_MAPUPDATE));
@@ -649,10 +699,43 @@ void World::LoadConfigSettings(bool reload)
     setConfigMin(CONFIG_UINT32_ADAPTIVE_LOAD_RECOVER_WORLD_MS, "AdaptiveLoad.RecoverWorldMs", 120, 1);
     setConfigMinMax(CONFIG_UINT32_ADAPTIVE_LOAD_MIN_VISIBILITY_PERCENT, "AdaptiveLoad.MinVisibilityPercent", 70, 25, 100);
     setConfigMinMax(CONFIG_UINT32_ADAPTIVE_LOAD_VISIBILITY_STEP_PERCENT, "AdaptiveLoad.VisibilityStepPercent", 5, 1, 25);
+    setConfigMin(CONFIG_UINT32_ADAPTIVE_LOAD_BOT_BUDGET_MS, "AdaptiveLoad.BotBudgetMs", 20, 1);
+    setConfigMin(CONFIG_UINT32_ADAPTIVE_LOAD_BACKGROUND_BOT_MIN_UPDATES, "AdaptiveLoad.BackgroundBotMinUpdates", 16, 1);
+    setConfigMin(CONFIG_UINT32_ADAPTIVE_LOAD_BACKGROUND_BOT_MAX_DEFERRAL_MS, "AdaptiveLoad.BackgroundBotMaxDeferralMs", 15000, 1000);
+    setConfigMin(CONFIG_UINT32_ADAPTIVE_LOAD_BOT_RECOVERY_TICKS, "AdaptiveLoad.BotRecoveryTicks", 20, 1);
+    setConfig(CONFIG_UINT32_ADAPTIVE_LOAD_MEMORY_SOFT_MB, "AdaptiveLoad.MemorySoftMB", 0);
+    setConfig(CONFIG_UINT32_ADAPTIVE_LOAD_MEMORY_HARD_MB, "AdaptiveLoad.MemoryHardMB", 0);
+    setConfig(CONFIG_UINT32_ADAPTIVE_LOAD_MEMORY_RECOVER_MB, "AdaptiveLoad.MemoryRecoverMB", 0);
+    uint32 memorySoftMb = getConfig(CONFIG_UINT32_ADAPTIVE_LOAD_MEMORY_SOFT_MB);
+    uint32 memoryHardMb = getConfig(CONFIG_UINT32_ADAPTIVE_LOAD_MEMORY_HARD_MB);
+    uint32 memoryRecoverMb = getConfig(CONFIG_UINT32_ADAPTIVE_LOAD_MEMORY_RECOVER_MB);
+    if (memorySoftMb && memoryHardMb && memoryHardMb <= memorySoftMb)
+    {
+        memoryHardMb = memorySoftMb + std::max<uint32>(256, memorySoftMb / 10);
+        setConfig(CONFIG_UINT32_ADAPTIVE_LOAD_MEMORY_HARD_MB, memoryHardMb);
+        sLog.outError("AdaptiveLoad.MemoryHardMB must exceed MemorySoftMB; adjusted to %u MB.", memoryHardMb);
+    }
+    if (!memorySoftMb && memoryRecoverMb)
+    {
+        memoryRecoverMb = 0;
+        setConfig(CONFIG_UINT32_ADAPTIVE_LOAD_MEMORY_RECOVER_MB, 0);
+        sLog.outError("AdaptiveLoad.MemoryRecoverMB requires MemorySoftMB; recovery threshold disabled.");
+    }
+    else if (memorySoftMb && (!memoryRecoverMb || memoryRecoverMb >= memorySoftMb))
+    {
+        memoryRecoverMb = std::max<uint32>(1, memorySoftMb * 9 / 10);
+        setConfig(CONFIG_UINT32_ADAPTIVE_LOAD_MEMORY_RECOVER_MB, memoryRecoverMb);
+        sLog.outError("AdaptiveLoad.MemoryRecoverMB must be below MemorySoftMB; adjusted to %u MB.", memoryRecoverMb);
+    }
+    sLog.outString("Arch3 memory guard: soft=%u MB hard=%u MB recover=%u MB",
+        memorySoftMb, memoryHardMb, memoryRecoverMb);
     setConfig(CONFIG_BOOL_MOVEMENT_COMPRESSION_ENABLED, "MovementCompression.Enabled", true);
     setConfigMin(CONFIG_UINT32_MOVEMENT_COMPRESSION_MIN_PACKETS, "MovementCompression.MinPackets", 3, 2);
     setConfigMin(CONFIG_UINT32_MOVEMENT_BROADCAST_THREADS, "MovementBroadcast.Threads", 1, 1);
     setConfigMin(CONFIG_UINT32_MOVEMENT_BROADCAST_MAX_QUEUED_BATCHES, "MovementBroadcast.MaxQueuedBatches", 32768, 128);
+    setConfigMin(CONFIG_UINT32_DATABASE_CALLBACK_BUDGET_MS, "Database.CallbackBudgetMs", 5, 1);
+    setConfig(CONFIG_UINT32_LOGIN_BOT_SESSIONS_PER_TICK, "Login.BotSessionsPerTick", 100);
+    setConfig(CONFIG_UINT32_PLAYERBOT_IDLE_CORE_UPDATE_SKIP, "Playerbot.IdleCoreUpdateSkip", 4);
     setConfig(CONFIG_FLOAT_DYN_RESPAWN_CHECK_RANGE, "DynamicRespawn.Range", -1.0f);
     setConfig(CONFIG_FLOAT_DYN_RESPAWN_MAX_REDUCTION_RATE, "DynamicRespawn.MaxReductionRate", 0.0f);
     setConfig(CONFIG_FLOAT_DYN_RESPAWN_PERCENT_PER_PLAYER, "DynamicRespawn.PercentPerPlayer", 0.0f);
@@ -922,6 +1005,8 @@ void World::LoadConfigSettings(bool reload)
 /// Initialize the World
 void World::SetInitialWorldSettings()
 {
+    if (sConfig.GetBoolDefault("Memory.SampleAllocations", false))
+        ManTech::StartAllocationProfile();
     ///- Initialize the random number generator
     srand((unsigned int)time(nullptr));
 
@@ -1544,6 +1629,35 @@ void World::SetInitialWorldSettings()
 #endif
 #endif
 
+    ManTechPortableUtilityGrant::BackfillExistingCharacters();
+
+    sLog.outString("ARCH3_STARTUP realm=tbc world_db=%s character_db=%s data_dir=%s",
+        REVISION_DB_MANGOS, REVISION_DB_CHARACTERS, m_dataPath.c_str());
+    bool arch3WorldMigrationReady = false;
+    if (auto migrationTable = WorldDatabase.Query("SHOW TABLES LIKE 'mantech_migration'"))
+        arch3WorldMigrationReady = static_cast<bool>(WorldDatabase.Query("SELECT 1 FROM mantech_migration WHERE id='arch3-world-tbc-v1' LIMIT 1"));
+    sLog.outString("ARCH3_STARTUP migration_world=%u", arch3WorldMigrationReady ? 1u : 0u);
+    if (!arch3WorldMigrationReady)
+        sLog.outError("ARCH3_STARTUP required world migration arch3-world-tbc-v1 is missing.");
+    const bool portableMailboxReady = ObjectMgr::GetItemPrototype(65000) != nullptr;
+    const bool portableRepairReady = ObjectMgr::GetItemPrototype(65001) != nullptr;
+    sLog.outString("ARCH3_STARTUP portable_mailbox=%u portable_repair=%u adaptive_load=%u bot_budget_ms=%u max_bot_deferral_ms=%u repeated_warning_interval_ms=%u memory_soft_mb=%u memory_hard_mb=%u memory_recover_mb=%u",
+        portableMailboxReady ? 1u : 0u, portableRepairReady ? 1u : 0u,
+        getConfig(CONFIG_BOOL_ADAPTIVE_LOAD_ENABLED) ? 1u : 0u,
+        getConfig(CONFIG_UINT32_ADAPTIVE_LOAD_BOT_BUDGET_MS),
+        getConfig(CONFIG_UINT32_ADAPTIVE_LOAD_BACKGROUND_BOT_MAX_DEFERRAL_MS),
+        std::max<uint32>(1000, sConfig.GetIntDefault("Diagnostics.RepeatedWarningIntervalMs", 300000)),
+        getConfig(CONFIG_UINT32_ADAPTIVE_LOAD_MEMORY_SOFT_MB),
+        getConfig(CONFIG_UINT32_ADAPTIVE_LOAD_MEMORY_HARD_MB),
+        getConfig(CONFIG_UINT32_ADAPTIVE_LOAD_MEMORY_RECOVER_MB));
+    if (!portableMailboxReady || !portableRepairReady)
+        sLog.outError("ARCH3_STARTUP portable utility item data is incomplete; apply the Arch3 world migration before testing those items.");
+#ifdef ENABLE_PLAYERBOTS
+    sLog.outString("ARCH3_STARTUP playerbots=%u diagnostics_mode=%u diagnostics_interval_ms=%u path_retry_ms=%u",
+        sPlayerbotAIConfig.enabled ? 1u : 0u, sPlayerbotAIConfig.diagnosticsMode,
+        sPlayerbotAIConfig.diagnosticsInterval, sPlayerbotAIConfig.pathFailureRetryMs);
+#endif
+
 #ifdef ENABLE_MODULES
     sModuleMgr.OnWorldInitialized();
 #endif
@@ -1607,6 +1721,8 @@ void World::DetectDBCLang()
 /// Update the World !
 void World::Update(uint32 diff)
 {
+    ManTech::Diag::StartObserver();
+    MANTECH_DIAG_SCOPE(World,1,nullptr);
     m_currentMSTime = WorldTimer::getMSTime();
     m_currentTime = std::chrono::time_point_cast<std::chrono::milliseconds>(Clock::now());
     m_currentDiff = diff;
@@ -1720,6 +1836,10 @@ void World::Update(uint32 diff)
 #endif
     const uint32 performanceSessionStart = WorldTimer::getMSTime();
     UpdateSessions(diff);
+#ifdef ENABLE_PLAYERBOTS
+    // Process human membership packets before bounded bot recruitment work.
+    ai::BotRecruitment::Update(diff);
+#endif
     performanceSessionElapsed = WorldTimer::getMSTimeDiff(performanceSessionStart, WorldTimer::getMSTime());
 
     /// <li> Update uptime table
@@ -1879,6 +1999,9 @@ void World::Update(uint32 diff)
         static uint64 performanceWindowMaps = 0;
         static uint32 performanceWindowMaximum = 0;
         static uint32 performanceWindowSlowUpdates = 0;
+        static uint32 lastSlowWorldDetailMs = 0;
+        static uint32 suppressedSlowWorldDetails = 0;
+        static uint32 peakSuppressedSlowWorldMs = 0;
 
         if (!performanceWindowStart)
             performanceWindowStart = performanceWorldStart;
@@ -1893,22 +2016,200 @@ void World::Update(uint32 diff)
         if (performanceTotalElapsed >= slowWorldThreshold)
         {
             ++performanceWindowSlowUpdates;
-            sLog.outPerformance("SLOW_WORLD loop=%u total=%u ms input_diff=%u ms bots=%u ms sessions=%u ms maps=%u ms other=%u ms sessions_online=%u",
-                m_worldLoopCounter.load(std::memory_order_relaxed), performanceTotalElapsed, diff, performanceBotElapsed,
-                performanceSessionElapsed, performanceMapElapsed, performanceOtherElapsed, static_cast<uint32>(GetActiveSessionCount()));
+            ++suppressedSlowWorldDetails;
+            peakSuppressedSlowWorldMs = std::max(peakSuppressedSlowWorldMs, performanceTotalElapsed);
+            uint32 const now = WorldTimer::getMSTime();
+            if (!lastSlowWorldDetailMs || WorldTimer::getMSTimeDiff(lastSlowWorldDetailMs, now) >= getConfig(CONFIG_UINT32_PERFORMANCE_LOG_DETAIL_INTERVAL_MS))
+            {
+                sLog.outPerformance("SLOW_WORLD loop=%u total=%u ms peak=%u ms samples=%u input_diff=%u ms bots=%u ms sessions=%u ms maps=%u ms other=%u ms sessions_online=%u",
+                    m_worldLoopCounter.load(std::memory_order_relaxed), performanceTotalElapsed, peakSuppressedSlowWorldMs,
+                    suppressedSlowWorldDetails, diff, performanceBotElapsed, performanceSessionElapsed, performanceMapElapsed,
+                    performanceOtherElapsed, static_cast<uint32>(GetActiveSessionCount()));
+                lastSlowWorldDetailMs = now;
+                suppressedSlowWorldDetails = 0;
+                peakSuppressedSlowWorldMs = 0;
+            }
         }
 
         const uint32 performanceWindowElapsed = WorldTimer::getMSTimeDiff(performanceWindowStart, WorldTimer::getMSTime());
         if (performanceWindowElapsed >= getConfig(CONFIG_UINT32_PERFORMANCE_LOG_SUMMARY_INTERVAL_MS))
         {
             const uint64 updateCount = std::max<uint64>(1, performanceWindowUpdates);
-            sLog.outPerformance("WORLD_SUMMARY window=%u ms updates=%llu avg=%llu ms max=%u ms slow=%u avg_bots=%llu ms avg_sessions=%llu ms avg_maps=%llu ms sessions_online=%u map_threads=%u",
+            uint64 workingSetMb = 0;
+            uint64 privateMb = 0;
+            GetProcessMemoryMegabytes(workingSetMb, privateMb);
+            uint32 const pendingCallbacks = static_cast<uint32>(CharacterDatabase.GetPendingResultCount() +
+                WorldDatabase.GetPendingResultCount() + LoginDatabase.GetPendingResultCount());
+            uint32 const pendingDbOperations = static_cast<uint32>(CharacterDatabase.GetPendingAsyncOperationCount() +
+                WorldDatabase.GetPendingAsyncOperationCount() + LoginDatabase.GetPendingAsyncOperationCount() +
+                LogsDatabase.GetPendingAsyncOperationCount());
+            uint32 botsOnline = 0;
+#ifdef ENABLE_PLAYERBOTS
+            botsOnline = sRandomPlayerbotMgr.GetPlayerbotsAmount();
+#endif
+            sLog.outPerformance("WORLD_SUMMARY window=%u ms updates=%llu avg=%llu ms max=%u ms slow=%u avg_bots=%llu ms avg_sessions=%llu ms avg_maps=%llu ms sessions_online=%u bots_online=%u maps=%u map_threads=%u target_tick_ms=%u working_set_mb=%llu private_mb=%llu db_callbacks=%u db_operations=%u",
                 performanceWindowElapsed, static_cast<unsigned long long>(performanceWindowUpdates),
                 static_cast<unsigned long long>(performanceWindowTotal / updateCount), performanceWindowMaximum,
                 performanceWindowSlowUpdates, static_cast<unsigned long long>(performanceWindowBots / updateCount),
                 static_cast<unsigned long long>(performanceWindowSessions / updateCount),
                 static_cast<unsigned long long>(performanceWindowMaps / updateCount), static_cast<uint32>(GetActiveSessionCount()),
-                getConfig(CONFIG_UINT32_NUM_MAP_THREADS));
+                botsOnline, static_cast<uint32>(sMapMgr.Maps().size()), getConfig(CONFIG_UINT32_NUM_MAP_THREADS),
+                getConfig(CONFIG_UINT32_INTERVAL_MAPUPDATE),
+                static_cast<unsigned long long>(workingSetMb), static_cast<unsigned long long>(privateMb),
+                pendingCallbacks, pendingDbOperations);
+
+#ifdef MANTECH_USE_MIMALLOC
+            mi_stats_t heapStats;
+            mi_stats_init(&heapStats);
+            if (mi_stats_get(&heapStats))
+                sLog.outPerformance("ARCH4_ALLOCATOR name=mimalloc committed_bytes=%lld reserved_bytes=%lld normal_bytes=%lld huge_bytes=%lld",
+                    static_cast<long long>(heapStats.committed.current), static_cast<long long>(heapStats.reserved.current),
+                    static_cast<long long>(heapStats.malloc_normal.current), static_cast<long long>(heapStats.malloc_huge.current));
+#endif
+
+            for (unsigned i = 0; i < static_cast<unsigned>(ManTech::EntityKind::Count); ++i)
+            {
+                auto kind = static_cast<ManTech::EntityKind>(i);
+                sLog.outPerformance("ARCH4_ENTITIES kind=%s count=%llu", ManTech::EntityLedger::Name(kind),
+                    static_cast<unsigned long long>(ManTech::EntityLedger::Read(kind)));
+            }
+
+            // Requested payload bytes only; allocator metadata/capacity is reported separately.
+#ifndef MANTECH_DEV_DIAGNOSTICS
+            ManTech::WriteAllocationProfile();
+#endif
+            for (unsigned kind = 0; kind < static_cast<unsigned>(ManTech::MemoryKind::Count); ++kind)
+            {
+                auto memory = ManTech::MemoryLedger::Read(static_cast<ManTech::MemoryKind>(kind));
+                sLog.outPerformance("ARCH4_MEMORY kind=%u count=%llu payload_bytes=%llu peak_payload_bytes=%llu",
+                    kind, static_cast<unsigned long long>(memory.count), static_cast<unsigned long long>(memory.bytes), static_cast<unsigned long long>(memory.peak));
+            }
+
+            uint64 allocatedGrids = 0;
+            uint64 activeGrids = 0;
+            uint64 mapPlayers = 0;
+            uint64 activeNonPlayers = 0;
+            uint64 idleSchedulerCapacity = 0;
+            uint64 idleCoreTimerEntries = 0;
+            uint64 aiObjects = 0;
+            uint64 aiStrategies = 0;
+            uint64 aiActions = 0;
+            uint64 aiTriggers = 0;
+            uint64 aiValues = 0;
+            sMapMgr.DoForAllMaps([&](Map* map)
+            {
+                allocatedGrids += map->GetAllocatedGridsCount();
+                activeGrids += map->GetLoadedGridsCount();
+                mapPlayers += map->GetPlayerCount();
+                activeNonPlayers += map->GetActiveNonPlayerCount();
+#ifdef ENABLE_PLAYERBOTS
+                idleSchedulerCapacity += map->GetIdleBotSchedulerCapacity();
+                idleCoreTimerEntries += map->GetIdleBotCoreTimerEntries();
+                map->GetPlayerbotAIObjectStats(aiObjects, aiStrategies, aiActions, aiTriggers, aiValues);
+#endif
+            });
+
+            MapUpdater& mapUpdater = sMapMgr.GetMapUpdater();
+            MapUpdater& objectUpdater = sMapMgr.GetObjectUpdater();
+            MapUpdater& idleUpdater = sMapMgr.GetIdleBotUpdater();
+            MapUpdater& cellUpdater = sMapMgr.GetCellUpdater();
+            uint64 const mapQueuePeak = mapUpdater.ConsumePeakPendingRequests();
+            uint64 const objectQueuePeak = objectUpdater.ConsumePeakPendingRequests();
+            uint64 const idleQueuePeak = idleUpdater.ConsumePeakPendingRequests();
+            uint64 const cellQueuePeak = cellUpdater.ConsumePeakPendingRequests();
+
+            MMAP::MMapManager* mmap = MMAP::MMapFactory::createOrGetMMapManager();
+            uint64 const navMapQueries = mmap->getMapThreadQueryCount();
+            uint64 const navModelQueries = mmap->getModelThreadQueryCount();
+            uint64 itemRandom = 0, itemEquip = 0, itemInfo = 0, itemConsumable = 0, itemTrade = 0, itemEnchant = 0;
+            uint64 travelDestinations = 0, travelPoints = 0, travelFish = 0, travelAreaLevels = 0, travelBadMmaps = 0, travelTransfers = 0;
+            uint64 aiValuesReleased = 0;
+            uint64 aiImpossibleRetriesSuppressed = 0;
+            uint64 aiFailedRetriesSuppressed = 0;
+            uint64 transitionRequests = 0;
+            uint64 transitionWorkDiscarded = 0;
+#ifdef ENABLE_PLAYERBOTS
+            RandomItemCacheStats const itemCaches = sRandomItemMgr.GetCacheStats();
+            ai::TravelMgr::CacheStats const travelCaches = sTravelMgr.GetCacheStats();
+            itemRandom = itemCaches.randomItems;
+            itemEquip = itemCaches.equipmentItems;
+            itemInfo = itemCaches.itemInfoEntries;
+            itemConsumable = itemCaches.consumableItems;
+            itemTrade = itemCaches.tradeItems;
+            itemEnchant = itemCaches.enchantItems;
+            travelDestinations = travelCaches.destinations;
+            travelPoints = travelCaches.points;
+            travelFish = travelCaches.fishPoints;
+            travelAreaLevels = travelCaches.areaLevels;
+            travelBadMmaps = travelCaches.badMmaps;
+            travelTransfers = travelCaches.mapTransfers;
+            aiValuesReleased = AiObjectContext::GetExpiredValuesReleased();
+            aiImpossibleRetriesSuppressed = ai::Engine::GetSuppressedImpossibleActions();
+            aiFailedRetriesSuppressed = ai::Engine::GetSuppressedFailedActions();
+            transitionRequests = PlayerbotAI::ConsumeTransitionRequests();
+            transitionWorkDiscarded = PlayerbotAI::ConsumeDiscardedTransitionWork();
+#endif
+
+            if (transitionRequests || transitionWorkDiscarded)
+            {
+                sLog.outPerformance("BOT_TRANSITION_SUMMARY requests=%llu stale_work_discarded=%llu",
+                    static_cast<unsigned long long>(transitionRequests),
+                    static_cast<unsigned long long>(transitionWorkDiscarded));
+            }
+
+            sLog.outPerformance("MEMORY_SUMMARY working_set_mb=%llu private_mb=%llu maps=%u grids_allocated=%llu grids_active=%llu map_players=%llu active_nonplayers=%llu ai_objects=%llu ai_strategies=%llu ai_actions=%llu ai_triggers=%llu ai_values=%llu ai_values_released=%llu ai_impossible_retries_suppressed=%llu ai_failed_retries_suppressed=%llu idle_scheduler_capacity=%llu idle_core_timer_entries=%llu queue_map_peak=%llu queue_object_peak=%llu queue_idle_peak=%llu queue_cell_peak=%llu queue_map_pending=%llu queue_object_pending=%llu queue_idle_pending=%llu queue_cell_pending=%llu queue_map_queued=%llu queue_object_queued=%llu queue_idle_queued=%llu queue_cell_queued=%llu nav_maps=%u nav_tiles=%u nav_models=%u nav_map_thread_queries=%llu nav_model_thread_queries=%llu nav_query_allocations=%llu nav_query_frees=%llu nav_query_highwater=%llu item_random=%llu item_equip=%llu item_info=%llu item_consumable=%llu item_trade=%llu item_enchant=%llu travel_destinations=%llu travel_points=%llu travel_fish=%llu travel_area_levels=%llu travel_bad_mmaps=%llu travel_transfers=%llu",
+                static_cast<unsigned long long>(workingSetMb), static_cast<unsigned long long>(privateMb), static_cast<uint32>(sMapMgr.Maps().size()),
+                static_cast<unsigned long long>(allocatedGrids), static_cast<unsigned long long>(activeGrids),
+                static_cast<unsigned long long>(mapPlayers), static_cast<unsigned long long>(activeNonPlayers),
+                static_cast<unsigned long long>(aiObjects), static_cast<unsigned long long>(aiStrategies),
+                static_cast<unsigned long long>(aiActions), static_cast<unsigned long long>(aiTriggers), static_cast<unsigned long long>(aiValues),
+                static_cast<unsigned long long>(aiValuesReleased),
+                static_cast<unsigned long long>(aiImpossibleRetriesSuppressed), static_cast<unsigned long long>(aiFailedRetriesSuppressed),
+                static_cast<unsigned long long>(idleSchedulerCapacity), static_cast<unsigned long long>(idleCoreTimerEntries),
+                static_cast<unsigned long long>(mapQueuePeak), static_cast<unsigned long long>(objectQueuePeak),
+                static_cast<unsigned long long>(idleQueuePeak), static_cast<unsigned long long>(cellQueuePeak),
+                static_cast<unsigned long long>(mapUpdater.GetPendingRequests()), static_cast<unsigned long long>(objectUpdater.GetPendingRequests()),
+                static_cast<unsigned long long>(idleUpdater.GetPendingRequests()), static_cast<unsigned long long>(cellUpdater.GetPendingRequests()),
+                static_cast<unsigned long long>(mapUpdater.GetQueuedRequests()), static_cast<unsigned long long>(objectUpdater.GetQueuedRequests()),
+                static_cast<unsigned long long>(idleUpdater.GetQueuedRequests()), static_cast<unsigned long long>(cellUpdater.GetQueuedRequests()),
+                mmap->getLoadedMapsCount(), mmap->getLoadedTilesCount(), mmap->getLoadedModelsCount(),
+                static_cast<unsigned long long>(navMapQueries), static_cast<unsigned long long>(navModelQueries),
+                static_cast<unsigned long long>(mmap->getQueryAllocationCount()), static_cast<unsigned long long>(mmap->getQueryFreeCount()),
+                static_cast<unsigned long long>(mmap->getQueryHighWater()),
+                static_cast<unsigned long long>(itemRandom), static_cast<unsigned long long>(itemEquip),
+                static_cast<unsigned long long>(itemInfo), static_cast<unsigned long long>(itemConsumable),
+                static_cast<unsigned long long>(itemTrade), static_cast<unsigned long long>(itemEnchant),
+                static_cast<unsigned long long>(travelDestinations), static_cast<unsigned long long>(travelPoints),
+                static_cast<unsigned long long>(travelFish), static_cast<unsigned long long>(travelAreaLevels),
+                static_cast<unsigned long long>(travelBadMmaps), static_cast<unsigned long long>(travelTransfers));
+
+            static bool haveMemoryBaseline = false;
+            static uint64 previousPrivateMb = 0;
+            static uint64 previousGrids = 0;
+            static uint64 previousAiObjects = 0;
+            static uint64 previousAiValues = 0;
+            static uint64 previousNavQueries = 0;
+            static uint64 previousIdleCapacity = 0;
+            static uint64 previousTravelPoints = 0;
+            if (haveMemoryBaseline)
+            {
+                sLog.outPerformance("MEMORY_GROWTH private_delta_mb=%lld grids_delta=%lld ai_objects_delta=%lld ai_values_delta=%lld nav_queries_delta=%lld idle_capacity_delta=%lld travel_points_delta=%lld",
+                    static_cast<long long>(privateMb) - static_cast<long long>(previousPrivateMb),
+                    static_cast<long long>(allocatedGrids) - static_cast<long long>(previousGrids),
+                    static_cast<long long>(aiObjects) - static_cast<long long>(previousAiObjects),
+                    static_cast<long long>(aiValues) - static_cast<long long>(previousAiValues),
+                    static_cast<long long>(navMapQueries + navModelQueries) - static_cast<long long>(previousNavQueries),
+                    static_cast<long long>(idleSchedulerCapacity) - static_cast<long long>(previousIdleCapacity),
+                    static_cast<long long>(travelPoints) - static_cast<long long>(previousTravelPoints));
+            }
+            haveMemoryBaseline = true;
+            previousPrivateMb = privateMb;
+            previousGrids = allocatedGrids;
+            previousAiObjects = aiObjects;
+            previousAiValues = aiValues;
+            previousNavQueries = navMapQueries + navModelQueries;
+            previousIdleCapacity = idleSchedulerCapacity;
+            previousTravelPoints = travelPoints;
 
             performanceWindowStart = WorldTimer::getMSTime();
             performanceWindowUpdates = 0;
@@ -2379,8 +2680,28 @@ void World::UpdateSessions(uint32 diff)
             std::swap(m_sessionAddQueue, sessionQueueCopy);
         }
 
-        for (auto const& session : sessionQueueCopy)
+        std::deque<WorldSession*> deferredBots;
+        uint32 const botLimit = getConfig(CONFIG_UINT32_LOGIN_BOT_SESSIONS_PER_TICK);
+        uint32 botsAdded = 0;
+        for (WorldSession* session : sessionQueueCopy)
+        {
+#ifdef ENABLE_PLAYERBOTS
+            if (!session->HasClientSocket() && botLimit && botsAdded >= botLimit)
+            {
+                deferredBots.push_back(session);
+                continue;
+            }
+            if (!session->HasClientSocket())
+                ++botsAdded;
+#endif
             AddSession_(session);
+        }
+
+        if (!deferredBots.empty())
+        {
+            std::lock_guard<std::mutex> guard(m_sessionAddQueueLock);
+            m_sessionAddQueue.insert(m_sessionAddQueue.begin(), deferredBots.begin(), deferredBots.end());
+        }
     }
 
     ///- Then send an update signal to remaining ones
@@ -2428,10 +2749,12 @@ void World::InitResultQueue()
 
 void World::UpdateResultQueue()
 {
+    MANTECH_DIAG_SCOPE(DbCallbacks,1,nullptr);
     // process async result queues
-    CharacterDatabase.ProcessResultQueue();
-    WorldDatabase.ProcessResultQueue();
-    LoginDatabase.ProcessResultQueue();
+    uint32 const budget = getConfig(CONFIG_UINT32_DATABASE_CALLBACK_BUDGET_MS);
+    CharacterDatabase.ProcessResultQueue(budget);
+    WorldDatabase.ProcessResultQueue(budget);
+    LoginDatabase.ProcessResultQueue(budget);
 }
 
 void World::UpdateRealmCharCount(uint32 accountId)

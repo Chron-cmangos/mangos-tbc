@@ -21,6 +21,12 @@
 
 void ByteBufferException::PrintPosError() const
 {
+    if (invalidUtf8)
+    {
+        sLog.outError("Rejected invalid UTF-8 string in packet (end: %llu size: %llu string bytes: %llu)",
+            static_cast<unsigned long long>(pos), static_cast<unsigned long long>(size), static_cast<unsigned long long>(esize));
+        return;
+    }
     sLog.outError("Attempted to %s in ByteBuffer (pos: " SIZEFMTD " size: " SIZEFMTD ") value with size: " SIZEFMTD,
                   (add ? "put" : "get"), pos, size, esize);
 }

@@ -94,6 +94,7 @@ void GameEventMgr::LoadFromDB()
         {
             sLog.outString(">> Table game_event is empty.");
             sLog.outString();
+            RebuildEventLookup();
             return;
         }
 
@@ -110,6 +111,7 @@ void GameEventMgr::LoadFromDB()
         m_gameEvents.clear();
         sLog.outString(">> Table game_event is empty!");
         sLog.outString();
+        RebuildEventLookup();
         return;
     }
 
@@ -652,6 +654,23 @@ void GameEventMgr::LoadFromDB()
         sLog.outString();
         sLog.outString(">> Loaded %u start/end game event mails", count);
     }
+    RebuildEventLookup();
+}
+
+void GameEventMgr::RebuildEventLookup()
+{
+    // Match the original first match in event-index/list order, including
+    // negative event IDs. This indexes membership, not current activation.
+    const auto build = [](auto const& groups, auto& lookup, int32 offset)
+    {
+        lookup.clear();
+        for (size_t i = 0; i < groups.size(); ++i)
+            for (auto guid : groups[i])
+                lookup.emplace(guid, static_cast<int16>(static_cast<int32>(i) + offset));
+    };
+    build(m_gameEventCreatureGuids, m_creatureEventLookup, 1 - static_cast<int32>(m_gameEvents.size()));
+    build(m_gameEventGameobjectGuids, m_gameObjectEventLookup, 1 - static_cast<int32>(m_gameEvents.size()));
+    build(m_gameEventSpawnPoolIds, m_poolEventLookup, 0);
 }
 
 uint32 GameEventMgr::Initialize()                           // return the next event delay in ms
@@ -1130,33 +1149,24 @@ void GameEventMgr::SendEventMails(int16 event_id)
 template <>
 int16 GameEventMgr::GetGameEventId<Creature>(uint32 guid_or_poolid)
 {
-    for (uint16 i = 0; i < m_gameEventCreatureGuids.size(); ++i) // 0 <= i <= 2*(S := m_gameEvents.size()) - 2
-        for (GuidList::const_iterator itr = m_gameEventCreatureGuids[i].begin(); itr != m_gameEventCreatureGuids[i].end(); ++itr)
-            if (*itr == guid_or_poolid)
-                return i + 1 - m_gameEvents.size();       // -S *1 + 1 <= . <= 1*S - 1
-    return 0;
+    auto found = m_creatureEventLookup.find(guid_or_poolid);
+    return found == m_creatureEventLookup.end() ? 0 : found->second;
 }
 
 // Get the Game Event ID for GameObject by guid
 template <>
 int16 GameEventMgr::GetGameEventId<GameObject>(uint32 guid_or_poolid)
 {
-    for (uint16 i = 0; i < m_gameEventGameobjectGuids.size(); ++i)
-        for (GuidList::const_iterator itr = m_gameEventGameobjectGuids[i].begin(); itr != m_gameEventGameobjectGuids[i].end(); ++itr)
-            if (*itr == guid_or_poolid)
-                return i + 1 - m_gameEvents.size();       // -S *1 + 1 <= . <= 1*S - 1
-    return 0;
+    auto found = m_gameObjectEventLookup.find(guid_or_poolid);
+    return found == m_gameObjectEventLookup.end() ? 0 : found->second;
 }
 
 // Get the Game Event ID for Pool by pool ID
 template <>
 int16 GameEventMgr::GetGameEventId<Pool>(uint32 guid_or_poolid)
 {
-    for (uint16 i = 0; i < m_gameEventSpawnPoolIds.size(); ++i)
-        for (IdList::const_iterator itr = m_gameEventSpawnPoolIds[i].begin(); itr != m_gameEventSpawnPoolIds[i].end(); ++itr)
-            if (*itr == guid_or_poolid)
-                return i;
-    return 0;
+    auto found = m_poolEventLookup.find(guid_or_poolid);
+    return found == m_poolEventLookup.end() ? 0 : found->second;
 }
 
 GameEventMgr::GameEventMgr()

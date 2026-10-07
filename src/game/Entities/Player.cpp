@@ -1,3 +1,4 @@
+#include "Util/DevDiagnostics.h"
 /*
  * This file is part of the CMaNGOS Project. See AUTHORS file for Copyright information
  *
@@ -16,6 +17,8 @@
  * Foundation, Inc., 59 Temple Place, Suite 330, Boston, MA  02111-1307  USA
  */
 
+#include "Mails/ManTechPortableUtilityGrant.h"
+#include "Entities/PortableRepairVendor.h"
 #include "Entities/Player.h"
 #include "Tools/Language.h"
 #include "Database/DatabaseEnv.h"
@@ -1437,6 +1440,7 @@ uint32 Player::getCorpseReclaimDelayHelper(time_t deathExpirationTime, time_t ti
 
 void Player::Update(const uint32 diff)
 {
+    MANTECH_DIAG_SCOPE(Player,32,nullptr);
     if (!IsInWorld())
         return;
 
@@ -1560,8 +1564,7 @@ void Player::Update(const uint32 diff)
             m_positionStatusUpdateTimer -= diff;
     }
 
-    // === FIX: Guard the automated background zone tick ===
-    if (m_zoneUpdateTimer > 0 && IsInWorld())
+    if (m_zoneUpdateTimer > 0)
     {
         if (diff >= m_zoneUpdateTimer)
         {
@@ -1647,9 +1650,8 @@ void Player::Update(const uint32 diff)
     else
         m_createdInstanceClearTimer -= diff;
 
-    // === FIX: Use IsInWorld() to avoid hitting the GetMap assertion macro ===
     Pet* pet = GetPet();
-    if (pet && IsInWorld() && !pet->IsWithinDistInMap(this, GetMap()->GetVisibilityDistance()) && (GetCharmGuid() && (pet->GetObjectGuid() != GetCharmGuid())))
+    if (pet && !pet->IsWithinDistInMap(this, GetMap()->GetVisibilityDistance()) && (GetCharmGuid() && (pet->GetObjectGuid() != GetCharmGuid())))
         pet->Unsummon(PET_SAVE_REAGENTS, this);
 
     if (IsHasDelayedTeleport() && !m_semaphoreTeleport_Near)
@@ -1661,10 +1663,6 @@ void Player::Update(const uint32 diff)
     else if (m_playerbotMgr)
         m_playerbotMgr->UpdateAI(diff);
 #endif
-
-    // === SAFETY RE-CHECK: Ensure Map context hasn't dropped before exit ===
-    if (!IsInWorld())
-        return;
 }
 
 void Player::Heartbeat()
@@ -1696,11 +1694,11 @@ void Player::RemovePlayerbotMgr()
     m_playerbotMgr = nullptr;
 }
 
-void Player::UpdateAI(const uint32 diff, bool minimal)
+void Player::UpdateAI(const uint32 diff, bool minimal, bool delayAlreadyAdvanced)
 {
     if (m_playerbotAI)
     {
-        m_playerbotAI->UpdateAI(diff, minimal);
+        m_playerbotAI->UpdateAI(diff, minimal, delayAlreadyAdvanced);
     }
 
     if (m_playerbotMgr)
@@ -2564,10 +2562,6 @@ void Player::ModifyMoney(int32 d)
     else
         SetMoney(GetMoney() < uint32(MAX_MONEY_AMOUNT - d) ? GetMoney() + d : MAX_MONEY_AMOUNT);
 
-    // "At Gold Limit"
-    if (GetMoney() >= MAX_MONEY_AMOUNT)
-        SendEquipError(EQUIP_ERR_TOO_MUCH_GOLD, nullptr, nullptr);
-
 #ifdef ENABLE_MODULES
     sModuleMgr.OnModifyMoney(this, d);
 #endif
@@ -2973,6 +2967,9 @@ void Player::GiveLevel(uint32 level)
 #ifdef ENABLE_MODULES
     sModuleMgr.OnGiveLevel(this, level);
 #endif
+    // Login/startup also retries this one-time gift, including copied characters.
+    if (IsInWorld() && level >= 40)
+        ManTechPortableUtilityGrant::GrantLevelRewardToCharacter(GetObjectGuid(), this);
 }
 
 void Player::UpdateFreeTalentPoints(bool resetIfNeed)
@@ -4107,11 +4104,11 @@ bool Player::resetTalents(bool no_cost)
 
         m_resetTalentsCost = cost;
         m_resetTalentsTime = time(nullptr);
+    }
 
 #ifdef ENABLE_MODULES
-        sModuleMgr.OnResetTalents(this, cost);
+    sModuleMgr.OnResetTalents(this, cost);
 #endif
-    }
 
     // FIXME: remove pet before or after unlearn spells? for now after unlearn to allow removing of talent related, pet affecting auras
     RemovePet(PET_SAVE_REAGENTS);
@@ -4510,6 +4507,14 @@ void Player::DeleteFromDB(ObjectGuid playerguid, uint32 accountId, bool updateRe
                 while (resultFriend->NextRow());
             }
 
+            // Preserve account discovery before removing any legacy character history.
+            CharacterDatabase.PExecute(
+                "INSERT INTO account_dungeon_travel (account, destination, first_visit) "
+                "SELECT IF(c.account <> 0, c.account, c.deleteInfos_Account), t.destination, t.first_visit "
+                "FROM character_dungeon_travel t INNER JOIN characters c ON c.guid = t.guid "
+                "WHERE c.guid = %u AND (c.account <> 0 OR c.deleteInfos_Account > 0) "
+                "ON DUPLICATE KEY UPDATE first_visit = LEAST(account_dungeon_travel.first_visit, VALUES(first_visit))", lowguid);
+            CharacterDatabase.PExecute("DELETE FROM character_dungeon_travel WHERE guid = '%u'", lowguid);
             CharacterDatabase.PExecute("DELETE FROM characters WHERE guid = '%u'", lowguid);
             CharacterDatabase.PExecute("DELETE FROM character_declinedname WHERE guid = '%u'", lowguid);
             CharacterDatabase.PExecute("DELETE FROM character_action WHERE guid = '%u'", lowguid);
@@ -4530,6 +4535,7 @@ void Player::DeleteFromDB(ObjectGuid playerguid, uint32 accountId, bool updateRe
             CharacterDatabase.PExecute("DELETE FROM character_social WHERE guid = '%u' OR friend='%u'", lowguid, lowguid);
             CharacterDatabase.PExecute("DELETE FROM mail WHERE receiver = '%u'", lowguid);
             CharacterDatabase.PExecute("DELETE FROM mail_items WHERE receiver = '%u'", lowguid);
+            CharacterDatabase.PExecute("DELETE FROM mantech_character_grants WHERE guid = '%u'", lowguid);
             CharacterDatabase.PExecute("DELETE FROM character_pet WHERE owner = '%u'", lowguid);
             CharacterDatabase.PExecute("DELETE FROM character_pet_declinedname WHERE owner = '%u'", lowguid);
             CharacterDatabase.PExecute("DELETE FROM guild_eventlog WHERE PlayerGuid1 = '%u' OR PlayerGuid2 = '%u'", lowguid, lowguid);
@@ -4538,7 +4544,7 @@ void Player::DeleteFromDB(ObjectGuid playerguid, uint32 accountId, bool updateRe
 
 #ifdef ENABLE_MODULES
             sModuleMgr.OnDeleteFromDB(lowguid);
-#endif   
+#endif
 
             break;
         }
@@ -4698,11 +4704,11 @@ void Player::ResurrectPlayer(float restore_percent, bool applySickness)
 
         if (InstanceData* instanceData = GetMap()->GetInstanceData())
             instanceData->OnPlayerResurrect(this);
+    }
 
 #ifdef ENABLE_MODULES
-        sModuleMgr.OnResurrect(this);
+    sModuleMgr.OnResurrect(this);
 #endif
-    }
 
     if (!applySickness)
         return;
@@ -5132,11 +5138,11 @@ void Player::RepopAtGraveyard()
         }
         if (updateVisibility && IsInWorld())
             UpdateVisibilityAndView();
+    }
 
 #ifdef ENABLE_MODULES
-        sModuleMgr.OnReleaseSpirit(this, ClosestGrave);
+    sModuleMgr.OnReleaseSpirit(this, ClosestGrave);
 #endif
-    }
 }
 
 void Player::JoinedChannel(Channel* c)
@@ -6168,6 +6174,11 @@ void Player::UpdateSkillTrainedSpells(uint16 id, uint16 currVal)
                 continue;
             }
 
+            // SkillLineAbility can retain entries for removed spells. Do not
+            // repeatedly try to teach them on login or skill updates.
+            if (!sSpellTemplate.LookupEntry<SpellEntry>(pAbility->spellId))
+                continue;
+
             // Check race if set
             if (pAbility->racemask && !(pAbility->racemask & raceMask))
                 continue;
@@ -6555,14 +6566,12 @@ bool Player::SetPosition(float x, float y, float z, float orientation, bool tele
         return true;
     m_positionStatusUpdateTimer = 100;
 
-    if (IsInWorld())
-    {
-        // code block for underwater state update
-        UpdateTerainEnvironmentFlags(m, x, y, z);
+    // code block for underwater state update
+    UpdateTerainEnvironmentFlags(m, x, y, z);
 
-        // code block for outdoor state and area-explore check
-        CheckAreaExploreAndOutdoor();
-    }
+    // code block for outdoor state and area-explore check
+    CheckAreaExploreAndOutdoor();
+
     return true;
 }
 
@@ -13766,13 +13775,13 @@ void Player::RewardQuest(Quest const* pQuest, uint32 reward, Object* questGiver,
     for (SpellAreaForAreaMap::const_iterator itr = saBounds.first; itr != saBounds.second; ++itr)
         itr->second->ApplyOrRemoveSpellIfCan(this, zone, area, false);
 
-    // resend quests status directly
-    UpdateForQuestWorldObjects();
-    SendQuestGiverStatusMultiple();
-
 #ifdef ENABLE_MODULES
     sModuleMgr.OnRewardQuest(this, pQuest);
 #endif
+
+    // resend quests status directly
+    UpdateForQuestWorldObjects();
+    SendQuestGiverStatusMultiple();
 }
 
 bool Player::IsQuestExplored(uint32 quest_id) const
@@ -19153,7 +19162,7 @@ bool Player::BuyItemFromVendor(ObjectGuid vendorGuid, uint32 item, uint8 count, 
         return false;
     }
 
-    uint32 price = pProto->BuyPrice * count;
+    uint32 price = PortableRepairVendor::GetBuyPrice(pCreature->GetEntry(), pProto->ItemId, pProto->BuyPrice) * count;
 
     // reputation discount
     price = uint32(floor(price * GetReputationPriceDiscount(pCreature)));
@@ -19858,6 +19867,8 @@ void Player::SendInitialPacketsBeforeAddToMap()
     data << uint32(0);
     GetSession()->SendPacket(data);
 
+    GetSession()->SendItemQuerySingleResponse(65000); // Refresh the instant portable mailbox carrier.
+    GetSession()->SendItemQuerySingleResponse(65003); // Refresh the cross-faction level-40 reward requirements.
     SendInitialSpells();
 
     SendUnlearnSpells();
@@ -21519,18 +21530,20 @@ void Player::learnClassLevelSpells(bool includeHighLevelQuestRewards)
 
                     if (learnedSpell)
                     {
-                        bool learned = false;
+                        bool hasLearnEffect = false;
                         for (int j = 0; j < 3; ++j)
                         {
                             if (proto->Effect[j] == SPELL_EFFECT_LEARN_SPELL)
                             {
+                                hasLearnEffect = true;
                                 uint32 learnedSpell2 = proto->EffectTriggerSpell[j];
+                                if (!learnedSpell2 || !sSpellTemplate.LookupEntry<SpellEntry>(learnedSpell2))
+                                    continue;
                                 learnSpell(learnedSpell2, false);
-                                learned = true;
                             }
                         }
 
-                        if (!learned)
+                        if (!hasLearnEffect)
                         {
                             learnSpell(learnedSpell, false);
                         }
@@ -21745,7 +21758,6 @@ void Player::HandleFall(MovementInfo const& movementInfo)
 #ifdef ENABLE_MODULES
                 damageReceived = EnvironmentalDamage(DAMAGE_FALL, damage);
 #else
-
                 EnvironmentalDamage(DAMAGE_FALL, damage);
 #endif
             }

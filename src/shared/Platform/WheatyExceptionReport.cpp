@@ -581,6 +581,30 @@ PEXCEPTION_POINTERS pExceptionInfo)
             Log(_T("\n\rCRITICAL ERROR.\n\r Couldn't initialize the symbol handler for process.\n\rError [%s].\n\r\n\r"),
                 ErrorMessage(GetLastError()));
         }
+        else
+        {
+            // Deployment packages keep matching PDBs in a symbols directory
+            // beside the executable. Preserve DbgHelp's default search path
+            // and append that directory so the built-in report can resolve
+            // MaNGOS frames without duplicating PDBs beside each executable.
+            TCHAR modulePath[MAX_PATH] = {};
+            TCHAR currentSearchPath[4096] = {};
+            TCHAR symbolSearchPath[8192] = {};
+            if (GetModuleFileName(nullptr, modulePath, MAX_PATH))
+            {
+                if (TCHAR* separator = _tcsrchr(modulePath, '\\'))
+                {
+                    *separator = '\0';
+                    SymGetSearchPath(GetCurrentProcess(), currentSearchPath, _countof(currentSearchPath));
+                    _tcscpy_s(symbolSearchPath, currentSearchPath);
+                    if (symbolSearchPath[0])
+                        _tcscat_s(symbolSearchPath, _T(";"));
+                    _tcscat_s(symbolSearchPath, modulePath);
+                    _tcscat_s(symbolSearchPath, _T("\\symbols"));
+                    SymSetSearchPath(GetCurrentProcess(), symbolSearchPath);
+                }
+            }
+        }
 
         if (pExceptionRecord->ExceptionCode == 0xE06D7363 && pExceptionRecord->NumberParameters >= 2)
         {

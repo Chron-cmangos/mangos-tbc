@@ -262,6 +262,12 @@ Spawns.ZoneArea = 0
 #        Interval for aggregate world update summaries.
 #        Default: 60000 (one minute)
 #
+#    PerformanceLog.DetailIntervalMs
+#        Minimum interval between repetitive SLOW_WORLD and per-map SLOW_MAP
+#        details. Suppressed samples and their peak are included in the next
+#        record so diagnostics do not become the workload.
+#        Default: 1000 milliseconds
+#
 #    AdaptiveLoad.Enabled
 #        Reduce idle-map work and temporarily reduce visibility during sustained slow world ticks.
 #        Default: 1 (enable)
@@ -293,6 +299,29 @@ Spawns.ZoneArea = 0
 #        Dedicated FIFO worker lanes used to compress and queue movement packets.
 #        A client is always assigned to one lane, preserving packet order.
 #        Default: 1
+#
+#    MapUpdate.IdleBotThreads
+#    MapUpdate.IdleBotChunkSize
+#    MapUpdate.IdleBotMaxUpdatesPerTick
+#    MapUpdate.IdleBotMaxTimerAdvanceMs
+#    MapUpdate.IdleBotJitterMs
+#        Experimental worker lanes for minimal AI updates of bots that are away
+#        from real players, combat, battlegrounds, and real-player groups.
+#        Zero keeps idle bot AI on the owning map thread.
+#        Due bots are dispatched in chunks to avoid one allocation and queue
+#        operation per bot per tick.
+#        Defaults: 2 threads and 64 bots
+#
+#    MapUpdate.CellThreads
+#    MapUpdate.CellChunkSize
+#        Traverse disjoint active cells in worker chunks, then merge the discovered
+#        object sets before ordered gameplay updates. Zero threads disables it.
+#        Defaults: 2 threads and 64 cells
+#
+#    Playerbot.IdleCoreUpdateSkip
+#        Core update cadence for the same inactive bots. Elapsed time is accumulated
+#        and supplied on the next update so timers remain correct. One disables it.
+#        Default: 4
 #
 #    MovementBroadcast.MaxQueuedBatches
 #        Per-lane backpressure limit. Map workers wait briefly if a lane reaches it
@@ -348,6 +377,14 @@ Spawns.ZoneArea = 0
 #                 0 (Disabled)
 #
 #
+#    WhoList.ShowOnlineTotal
+#        Show all online characters (both factions, including bots) in the WHO total.
+#        Search filters still restrict the displayed names, not this total.
+#        AllowTwoSide.WhoList controls cross-faction names, including for GMs in this mode.
+#        Hidden characters contribute only to the aggregate; name visibility is unchanged.
+#        The displayed list retains its 49-name limit. MaxWhoListReturns does not cap this total.
+#        Default: 0 (native matching-result total)
+#
 #    MaxWhoListReturns
 #        Set the max number of players returned in the /who list and interface (0 means unlimited)
 #        Default:     49 - (stable)
@@ -386,6 +423,18 @@ UpdateUptimeInterval = 10
 MapUpdate.Threads = 3
 MapUpdate.ObjectThreads = 1
 MapUpdate.VisibilityChunkSize = 64
+MapUpdate.IdleBotThreads = 2
+MapUpdate.IdleBotChunkSize = 64
+MapUpdate.IdleBotMaxUpdatesPerTick = 128
+MapUpdate.IdleBotMaxTimerAdvanceMs = 250
+MapUpdate.IdleBotJitterMs = 4000
+MapUpdate.CellThreads = 2
+MapUpdate.CellChunkSize = 64
+MapUpdate.CellMinParallelCells = 128
+MapUpdate.CellMaxChunksPerMap = 8
+MapUpdate.CellMaxWaitMs = 75
+MapUpdate.CellFallbackSeconds = 30
+Playerbot.IdleCoreUpdateSkip = 4
 Playerbot.StaggerBackgroundUpdates = 1
 PerformanceLog.Enabled = 1
 PerformanceLog.SlowWorldUpdateMs = 200
@@ -396,16 +445,28 @@ PerformanceLog.SlowPacketMs = 25
 PerformanceLog.SlowAsyncDbMs = 100
 PerformanceLog.SlowDbCallbackMs = 50
 PerformanceLog.SummaryIntervalMs = 60000
+PerformanceLog.DetailIntervalMs = 1000
+Diagnostics.RepeatedWarningIntervalMs = 300000
 AdaptiveLoad.Enabled = 1
 AdaptiveLoad.EmptyMapUpdateMs = 500
 AdaptiveLoad.SlowWorldMs = 250
 AdaptiveLoad.RecoverWorldMs = 120
 AdaptiveLoad.MinVisibilityPercent = 70
 AdaptiveLoad.VisibilityStepPercent = 5
+AdaptiveLoad.BotBudgetMs = 20
+AdaptiveLoad.BackgroundBotMinUpdates = 16
+AdaptiveLoad.BackgroundBotMaxDeferralMs = 15000
+AdaptiveLoad.BotRecoveryTicks = 20
+# Zero disables memory-pressure admission control. Dev may set these below host capacity.
+AdaptiveLoad.MemorySoftMB = 0
+AdaptiveLoad.MemoryHardMB = 0
+AdaptiveLoad.MemoryRecoverMB = 0
 MovementCompression.Enabled = 1
 MovementCompression.MinPackets = 3
 MovementBroadcast.Threads = 1
 MovementBroadcast.MaxQueuedBatches = 32768
+Database.CallbackBudgetMs = 5
+Login.BotSessionsPerTick = 100
 DynamicRespawn.Range = -1
 DynamicRespawn.PercentPerPlayer = 0
 DynamicRespawn.MaxReductionRate = 0
@@ -419,13 +480,21 @@ DynamicRespawn.PlayersMaxLevelDiff = 0
 DynamicRespawn.AllowElites = 0
 Continents.Instanciate = 0
 MaxCoreStuckTime = 0
+Watchdog.BreadcrumbFile = "StallBreadcrumb.log"
 AddonChannel = 1
 CleanCharacterDB = 1
 MaxWhoListReturns = 49
+WhoList.ShowOnlineTotal = 0
 AccountData = 0
 
 ###################################################################################################################
 # SERVER LOGGING
+# Arch3 bounded append-only diagnostics. Rotation happens safely on startup;
+# archives older than the retention window are removed.
+LogRotation.Enabled = 1
+LogRotation.MaxFileSizeMB = 100
+LogRotation.Daily = 1
+LogRotation.RetentionDays = 14
 #
 #    LogSQL
 #        Enable logging of GM commands - all SQL code will be written to a log file
@@ -2083,3 +2152,27 @@ Metric.Password = ""
 
 Dummy.Debug1 = 0
 Dummy.Debug2 = 0
+
+###################################################################################################################
+# Player dungeon travel (.tp; normal player commands must also be enabled).
+# Only the requesting player moves, to an approved destination for this expansion.
+# Existing CMaNGOS destinations may be inside or outside. Native entry rules apply.
+# Disabled by default. Set PlayerTravel.Enabled = 1 to enable for rank-0 players.
+# CooldownSeconds: seconds between successful initiations, clamped to 0..3600.
+# Reloading configuration applies to future requests; an initiated transfer may finish.
+PlayerTravel.Enabled = 0
+PlayerTravel.CooldownSeconds = 300
+
+# Arch 4: includes posted, queued and in-flight payloads. Exhaustion disconnects the receiver.
+Network.MaxPendingWriteKiB = 8192
+Network.MaxGlobalPendingWriteKiB = 262144
+
+# Maximum unreferenced terrain payload retained per map between normal cleanup
+# passes. Checked once per second at the existing worker barrier; referenced
+# terrain is never evicted. Collision references unload with eligible terrain.
+Memory.InactiveTerrainBudgetMB = 64
+
+# Diagnostic only; requires MANTECH_PROFILE_ALLOCATIONS at build time.
+# Samples C++ allocations, writes bounded stack tables to arch4-heap-*.tsv.
+# Adds runtime overhead. Leave off for ordinary performance comparisons.
+Memory.SampleAllocations = 0

@@ -78,6 +78,14 @@ void WorldSession::HandleUseItemOpcode(WorldPacket& recvPacket)
         return;
     }
 
+    // Refresh the portable hammer's old engineering-spell cache before sending
+    // cast/cooldown packets for its replacement carrier. TBC sends an item spell
+    // index, so CastItemUseSpell already selects the authoritative server spell;
+    // unlike Wrath there is no client spell ID to translate here.
+    if (pItem->GetEntry() == 65001 && spell_index == 0 &&
+        proto->Spells[0].SpellId == 28020 && proto->Spells[0].SpellTrigger == ITEM_SPELLTRIGGER_ON_USE)
+        SendItemQuerySingleResponse(pItem->GetEntry());
+
     // some item classes can be used only in equipped state
     if (proto->InventoryType != INVTYPE_NON_EQUIP && !pItem->IsEquipped())
     {

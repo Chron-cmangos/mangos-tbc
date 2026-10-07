@@ -323,6 +323,7 @@ namespace VMAP
             // insert new data
             DEBUG_FILTER_LOG(LOG_FILTER_MAP_LOADING, "VMapManager2: loading file '%s%s'.", basepath.c_str(), filename.c_str());
             model = iLoadedModelFiles.insert(std::pair<std::string, ManagedModel>(filename, ManagedModel())).first;
+            worldmodel->AccountMemory();
             model->second.setModel(worldmodel);
         }
         model->second.incRefCount();

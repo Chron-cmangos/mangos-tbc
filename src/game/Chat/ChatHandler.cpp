@@ -484,15 +484,18 @@ void WorldSession::HandleMessagechatOpcode(WorldPacket& recv_data)
         case CHAT_MSG_RAID_LEADER:
         {
             std::string msg;
-            recv_data >> msg;
+            if (lang == LANG_ADDON)
+                recv_data.read(msg, false);
+            else
+                recv_data >> msg;
 
             if (msg.empty())
                 break;
 
-            if (ChatHandler(this).ParseCommands(msg.c_str()))
+            if (lang != LANG_ADDON && ChatHandler(this).ParseCommands(msg.c_str()))
                 break;
 
-            if (!CheckChatMessage(msg))
+            if (!CheckChatMessage(msg, lang == LANG_ADDON))
                 return;
 
             // if player is in battleground, raid chat is sent only to members of normal group
@@ -530,12 +533,15 @@ void WorldSession::HandleMessagechatOpcode(WorldPacket& recv_data)
         case CHAT_MSG_RAID_WARNING:
         {
             std::string msg;
-            recv_data >> msg;
+            if (lang == LANG_ADDON)
+                recv_data.read(msg, false);
+            else
+                recv_data >> msg;
 
             if (msg.empty())
                 break;
 
-            if (!CheckChatMessage(msg))
+            if (!CheckChatMessage(msg, lang == LANG_ADDON))
                 return;
 
             // if player is in battleground, raid warning is sent only to players in battleground
@@ -601,12 +607,15 @@ void WorldSession::HandleMessagechatOpcode(WorldPacket& recv_data)
         case CHAT_MSG_BATTLEGROUND_LEADER:
         {
             std::string msg;
-            recv_data >> msg;
+            if (lang == LANG_ADDON)
+                recv_data.read(msg, false);
+            else
+                recv_data >> msg;
 
             if (msg.empty())
                 break;
 
-            if (!CheckChatMessage(msg))
+            if (!CheckChatMessage(msg, lang == LANG_ADDON))
                 return;
 
             // battleground chat is sent only to players in battleground

@@ -1335,6 +1335,7 @@ struct WorldMapAreaEntry
 
 #ifdef ENABLE_MODULES
 #define MAX_WORLD_MAP_OVERLAY_AREA_IDX 4
+
 struct WorldMapOverlayEntry
 {
     uint32    ID;                                           // 0        m_ID
@@ -1358,20 +1359,8 @@ struct WorldMapOverlayEntry
 
 struct WorldMapOverlayEntry
 {
-    uint32    ID;                                           // 0        m_ID
-    // uint32    worldMapAreaId;                            // 1        m_mapAreaID (WorldMapArea.dbc)
-    uint32    areatableID[MAX_WORLD_MAP_OVERLAY_AREA_IDX];  // 2-5      m_areaID
-                                                            // 6        m_mapPointX
-                                                            // 7        m_mapPointY
-    // char* internal_name                                  // 8        m_textureName
-                                                            // 9        m_textureWidth
-                                                            // 10       m_textureHeight
-                                                            // 11       m_offsetX
-                                                            // 12       m_offsetY
-                                                            // 13       m_hitRectTop
-                                                            // 14       m_hitRectLeft
-                                                            // 15       m_hitRectBottom
-                                                            // 16       m_hitRectRight
+    uint32    ID;
+    uint32    areatableID[MAX_WORLD_MAP_OVERLAY_AREA_IDX];
 };
 */
 #endif

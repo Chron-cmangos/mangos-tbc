@@ -22,6 +22,7 @@
 #include "Common.h"
 #include "Globals/SharedDefines.h"
 #include "Platform/Define.h"
+#include <unordered_map>
 
 #define max_ge_check_delay 86400                            // 1 day in seconds
 #define FAR_FUTURE 4102444800                               // 2100, January 1st
@@ -120,6 +121,10 @@ class GameEventMgr
 
         void WeeklyEventTimerRecalculation();
     private:
+        void RebuildEventLookup();
+        std::unordered_map<uint32, int16> m_creatureEventLookup;
+        std::unordered_map<uint32, int16> m_gameObjectEventLookup;
+        std::unordered_map<uint32, int16> m_poolEventLookup;
         void ApplyNewEvent(uint16 event_id, bool resume);
         void UnApplyEvent(uint16 event_id);
         void GameEventSpawn(int16 event_id);

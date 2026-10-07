@@ -47,6 +47,12 @@ class ProducerConsumerQueue
             return m_queue.empty();
         }
 
+        size_t Size()
+        {
+            std::lock_guard<std::mutex> lock(m_queueLock);
+            return m_queue.size();
+        }
+
         bool Pop(T& value)
         {
             std::lock_guard<std::mutex> lock(m_queueLock);

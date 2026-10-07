@@ -1,3 +1,4 @@
+#include "Util/DevDiagnostics.h"
 /*
  * This file is part of the CMaNGOS Project. See AUTHORS file for Copyright information
  *
@@ -175,6 +176,7 @@ bool MySQLConnection::Initialize(const char* infoString)
 
 bool MySQLConnection::_Query(const char* sql, MYSQL_RES** pResult, MYSQL_FIELD** pFields, uint64* pRowCount, uint32* pFieldCount)
 {
+    MANTECH_DIAG_SCOPE(DbCall,1,"MySQLConnection::_Query");
     if (!mMysql)
         return false;
 
@@ -243,6 +245,7 @@ QueryNamedResult* MySQLConnection::QueryNamed(const char* sql)
 
 bool MySQLConnection::Execute(const char* sql)
 {
+    MANTECH_DIAG_SCOPE(DbCall,1,"MySQLConnection::Execute");
     if (!mMysql)
         return false;
 
@@ -449,6 +452,7 @@ void MySqlPreparedStatement::RemoveBinds()
 
 bool MySqlPreparedStatement::execute()
 {
+    MANTECH_DIAG_SCOPE(DbCall,1,"MySqlPreparedStatement::execute");
     if (!isPrepared())
         return false;
 

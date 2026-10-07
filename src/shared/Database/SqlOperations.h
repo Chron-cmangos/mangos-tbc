@@ -20,6 +20,7 @@
 #define __SQLOPERATIONS_H
 
 #include "Common.h"
+#include "Memory/MemoryLedger.h"
 #include "Utilities/Callback.h"
 
 #include <queue>
@@ -36,10 +37,17 @@ class SqlStmtParameters;
 
 class SqlOperation
 {
+    std::size_t m_accountedBytes = 0;
     public:
+        SqlOperation() = default;
+        SqlOperation(SqlOperation const&) = delete;
+        SqlOperation& operator=(SqlOperation const&) = delete;
         virtual void OnRemove() { delete this; }
         virtual bool Execute(SqlConnection* conn) = 0;
-        virtual ~SqlOperation() {}
+        virtual const char* DiagnosticKind() const { return "operation"; }
+        virtual std::size_t RetainedBytes() const { return sizeof(*this); }
+        void TrackMemory() { if (!m_accountedBytes) { m_accountedBytes = RetainedBytes(); ManTech::MemoryLedger::Add(ManTech::MemoryKind::DatabaseWork, m_accountedBytes); } }
+        virtual ~SqlOperation() { if (m_accountedBytes) ManTech::MemoryLedger::Remove(ManTech::MemoryKind::DatabaseWork, m_accountedBytes); }
 };
 
 /// ---- ASYNC STATEMENTS / TRANSACTIONS ----
@@ -52,6 +60,8 @@ class SqlPlainRequest : public SqlOperation
         SqlPlainRequest(const char* sql) : m_sql(mangos_strdup(sql)) {}
         ~SqlPlainRequest() { char* tofree = const_cast<char*>(m_sql); delete[] tofree; }
         bool Execute(SqlConnection* conn) override;
+        const char* DiagnosticKind() const override { return "statement"; }
+        std::size_t RetainedBytes() const override { return sizeof(*this) + strlen(m_sql) + 1; }
 };
 
 class SqlTransaction : public SqlOperation
@@ -66,6 +76,8 @@ class SqlTransaction : public SqlOperation
         void DelayExecute(SqlOperation* sql) { m_queue.push_back(sql); }
 
         bool Execute(SqlConnection* conn) override;
+        const char* DiagnosticKind() const override { return "transaction"; }
+        std::size_t RetainedBytes() const override { std::size_t bytes = sizeof(*this) + m_queue.capacity()*sizeof(SqlOperation*); for (auto op : m_queue) bytes += op->RetainedBytes(); return bytes; }
 };
 
 class SqlPreparedRequest : public SqlOperation
@@ -75,6 +87,8 @@ class SqlPreparedRequest : public SqlOperation
         ~SqlPreparedRequest();
 
         bool Execute(SqlConnection* conn) override;
+        const char* DiagnosticKind() const override { return "prepared"; }
+        std::size_t RetainedBytes() const override;
 
     private:
         const int m_nIndex;
@@ -117,6 +131,8 @@ class SqlQuery : public SqlOperation
         }
 
         bool Execute(SqlConnection* conn) override;
+        const char* DiagnosticKind() const override { return "query"; }
+        std::size_t RetainedBytes() const override { return sizeof(*this) + m_sql.capacity(); }
 };
 
 class SqlQueryHolder
@@ -128,6 +144,7 @@ class SqlQueryHolder
     public:
         SqlQueryHolder() {}
         virtual ~SqlQueryHolder();
+        std::size_t RetainedBytes() const { std::size_t bytes=sizeof(*this)+m_queries.capacity()*sizeof(SqlResultPair); for (auto const& q:m_queries) if (q.first) bytes+=strlen(q.first)+1; return bytes; }
         bool SetQuery(size_t index, const char* sql);
         bool SetPQuery(size_t index, const char* format, ...) ATTR_PRINTF(3, 4);
         void SetSize(size_t size);
@@ -147,5 +164,7 @@ class SqlQueryHolderEx : public SqlOperation
         SqlQueryHolderEx(SqlQueryHolder* holder, MaNGOS::IQueryCallback* callback, SqlResultQueue* queue, bool highPriority = false)
             : m_holder(holder), m_callback(callback), m_queue(queue), m_highPriority(highPriority) {}
         bool Execute(SqlConnection* conn) override;
+        const char* DiagnosticKind() const override { return "query_holder"; }
+        std::size_t RetainedBytes() const override { return sizeof(*this) + (m_holder ? m_holder->RetainedBytes() : 0); }
 };
 #endif                                                      //__SQLOPERATIONS_H

@@ -810,7 +810,9 @@ bool FollowMovementGenerator::IsUnstuckAllowed(Unit& owner) const
 
 void FollowMovementGenerator::Initialize(Unit& owner)
 {
-    if (!i_target.isValid() || !i_target->IsInWorld())
+    // A teleport can detach the owner before retained follow motion is reset.
+    // GetMap() requires an attached world object; wait until both are in-world.
+    if (!owner.IsInWorld() || !i_target.isValid() || !i_target->IsInWorld())
         return;
 
     if (i_target->GetMap() != owner.GetMap())
@@ -925,6 +927,10 @@ bool FollowMovementGenerator::Move(Unit& owner, float x, float y, float z)
             owner.NearTeleportTo(x, y, z, o);
         else
         {
+            // Recovery relocates directly; the old spline must not move the
+            // follower back to its previous path on the next position update.
+            owner.InterruptMoving();
+            _clearUnitStateMove(owner);
             owner.GetMap()->CreatureRelocation(static_cast<Creature*>(&owner), x, y, z, o);
             owner.SendHeartBeat();
         }

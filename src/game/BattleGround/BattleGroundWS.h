@@ -222,6 +222,10 @@ class BattleGroundWS : public BattleGround
         // Flag handler
         ObjectGuid const& GetFlagCarrierGuid(uint8 teamIdx) const { return m_flagCarrier[teamIdx]; }
 
+        // Read-only flag state for bot objectives and other battleground observers.
+        ObjectGuid const& GetDroppedFlagGuid(Team team) const { return m_droppedFlagGuid[GetTeamIndexByTeamId(team)];}
+        int32 GetFlagState(Team team);
+
         bool IsFlagHeldFor45Seconds(Team flagHolderTeam);
 
     private:
@@ -233,11 +237,9 @@ class BattleGroundWS : public BattleGround
 
         // Flag interactions
         void ClearDroppedFlagGuid(Team team)  { m_droppedFlagGuid[GetTeamIndexByTeamId(team)].Clear();}
-        ObjectGuid const& GetDroppedFlagGuid(Team team) const { return m_droppedFlagGuid[GetTeamIndexByTeamId(team)];}
 
         void RespawnFlagAtBase(Team team, bool wasCaptured);
         void RespawnDroppedFlag(Team team);
-        int32 GetFlagState(Team team);
 
         void ProcessFlagPickUpFromBase(Player* player, Team attackerTeam);
         void ProcessDroppedFlagActions(Player* player, GameObject* target);

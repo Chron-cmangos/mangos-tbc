@@ -2261,7 +2261,7 @@ struct npc_dimensiusAI : public Scripted_NoMovementAI
     uint32 m_uiSpiralTimer;
     uint32 m_uiVaultTimer;
     uint32 m_uiConsumeTimer;
-    uint32 m_uiRainTimer;    
+    uint32 m_uiRainTimer;
     uint8 m_uiRainIndex;
     uint8 m_uiSpawnsDead;
 

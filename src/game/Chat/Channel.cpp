@@ -1,3 +1,4 @@
+#include "Util/DevDiagnostics.h"
 /*
  * This file is part of the CMaNGOS Project. See AUTHORS file for Copyright information
  *
@@ -746,12 +747,14 @@ void Channel::SendToOne(WorldPacket const& data, ObjectGuid receiver) const
 
 void Channel::SendToAll(WorldPacket const& data) const
 {
+    MANTECH_DIAG_SCOPE(Packet,32,"channel broadcast fanout");
     for (PlayerList::const_iterator i = m_players.begin(); i != m_players.end(); ++i)
         SendToOne(data, i->first);
 }
 
 void Channel::SendMessage(WorldPacket const& data, ObjectGuid sender) const
 {
+    MANTECH_DIAG_SCOPE(Packet,1,"channel chat delivery");
     for (PlayerList::const_iterator i = m_players.begin(); i != m_players.end(); ++i)
         if (Player* plr = sObjectMgr.GetPlayer(i->first))
             if (!sender || !plr->GetSocial()->HasIgnore(sender))

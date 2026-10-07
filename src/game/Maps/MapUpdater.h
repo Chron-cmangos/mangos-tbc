@@ -33,7 +33,7 @@ class Worker;
 class MapUpdater
 {
     public:
-        MapUpdater() : _cancelationToken(false), pending_requests(0) {}
+        MapUpdater() : _cancelationToken(false), pending_requests(0), peak_pending_requests(0) {}
         MapUpdater(size_t num_threads);
         MapUpdater(const MapUpdater&) = delete;
         
@@ -44,6 +44,10 @@ class MapUpdater
         bool activated();
         void update_finished();
         void schedule_update(Worker* worker);
+        size_t GetPendingRequests();
+        size_t GetQueuedRequests();
+        size_t ConsumePeakPendingRequests();
+        size_t GetWorkerCount() const { return _workerThreads.size(); }
 
     private:
         ProducerConsumerQueue<Worker *> _queue;
@@ -54,6 +58,7 @@ class MapUpdater
         std::mutex _lock;
         std::condition_variable _condition;
         size_t pending_requests;
+        size_t peak_pending_requests;
 
         void WorkerThread();
 };

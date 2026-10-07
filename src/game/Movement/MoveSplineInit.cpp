@@ -24,33 +24,14 @@
 #include "Maps/TransportSystem.h"
 #include "Entities/Transports.h"
 
+#include <cmath>
+
 namespace Movement
 {
     static thread_local uint32 splineCounter = 1;
 
     int32 MoveSplineInit::Launch()
     {
-        // show path in the client if need
-        if (unit.HaveDebugFlag(CMDEBUGFLAG_WP_PATH))
-        {
-            uint32 counter = 0;
-            for (auto pt : args.path)
-            {
-                TempSpawnSettings settings;
-                settings.spawner = &unit;
-                settings.entry = VISUAL_WAYPOINT;
-                settings.x = pt.x; settings.y = pt.y; settings.z = pt.z; settings.ori = 0.0f;
-                settings.activeObject = true;
-                settings.despawnTime = 30 * IN_MILLISECONDS;
-                settings.spawnType = TEMPSPAWN_TIMED_DESPAWN;
-                settings.spawnDataEntry = 2;
-
-                settings.tempSpawnMovegen = true;
-                settings.waypointId = counter++;
-
-                WorldObject::SummonCreature(settings, unit.GetMap());
-            }
-        }
         MoveSpline& move_spline = *unit.movespline;
         TransportInfo* transportInfo = unit.GetTransportInfo();
         // TODO: merge these two together
@@ -79,6 +60,60 @@ namespace Movement
 
         // corrent first vertex
         args.path[0] = real_position;
+
+        bool hasMovement = false;
+        Vector3 previous = args.path.front();
+        for (Vector3 const& point : args.path)
+        {
+            if (!std::isfinite(point.x) || !std::isfinite(point.y) || !std::isfinite(point.z))
+            {
+                sLog.outError("MoveSplineInit::Launch rejected non-finite path for %s", unit.GetGuidStr().c_str());
+                Stop(true);
+                return 0;
+            }
+
+            if ((point - previous).squaredMagnitude() > 0.0001f)
+                hasMovement = true;
+            previous = point;
+        }
+
+        // Recheck after replacing the first vertex with the current spline
+        // position: a queued fall may already have reached or passed its floor.
+        if (args.flags.falling && real_position.z - args.path.back().z < 0.01f)
+        {
+            Stop(true);
+            return 0;
+        }
+
+        // A zero-distance request is an arrival, not a malformed spline.  Clearing
+        // the previous spline also prevents a stale moving flag from surviving it.
+        if (!hasMovement && !pathEmpty && !args.flags.cyclic)
+        {
+            Stop(true);
+            return 0;
+        }
+
+        // show path in the client if need, after input validation
+        if (unit.HaveDebugFlag(CMDEBUGFLAG_WP_PATH))
+        {
+            uint32 counter = 0;
+            for (auto pt : args.path)
+            {
+                TempSpawnSettings settings;
+                settings.spawner = &unit;
+                settings.entry = VISUAL_WAYPOINT;
+                settings.x = pt.x; settings.y = pt.y; settings.z = pt.z; settings.ori = 0.0f;
+                settings.activeObject = true;
+                settings.despawnTime = 30 * IN_MILLISECONDS;
+                settings.spawnType = TEMPSPAWN_TIMED_DESPAWN;
+                settings.spawnDataEntry = 2;
+
+                settings.tempSpawnMovegen = true;
+                settings.waypointId = counter++;
+
+                WorldObject::SummonCreature(settings, unit.GetMap());
+            }
+        }
         args.flags.enter_cycle = args.flags.cyclic;
         uint32 moveFlags = unit.m_movementInfo.GetMovementFlags();
         if (args.flags.runmode)

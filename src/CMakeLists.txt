@@ -28,8 +28,8 @@ if(BUILD_PLAYERBOTS)
   FetchContent_Declare(
     PlayerBots
     SOURCE_DIR "${CMAKE_CURRENT_SOURCE_DIR}/modules/PlayerBots"
-    GIT_REPOSITORY "https://github.com/chron-cmangos/playerbots.git"
-    GIT_TAG "master"
+    GIT_REPOSITORY "https://github.com/T-imothy/playerbots.git"
+        GIT_TAG "1a6ab21ca9ef1b702dd093acbcc71dc304848a82" # ManTech baseline: public bot transfer between raid instances
   )
 
   FetchContent_GetProperties(PlayerBots)
@@ -40,7 +40,12 @@ if(BUILD_PLAYERBOTS)
     message(STATUS "Playerbots module already populated: ${playerbots_POPULATED}")
   endif()
 
-  add_subdirectory(${playerbots_SOURCE_DIR})
+  add_subdirectory(${playerbots_SOURCE_DIR} ${CMAKE_BINARY_DIR}/playerbots)
+  include("${CMAKE_SOURCE_DIR}/cmake/playerbot_loot_policy.cmake")
+  include("${CMAKE_SOURCE_DIR}/cmake/playerbot_map_lifecycle.cmake")
+  include("${CMAKE_SOURCE_DIR}/cmake/playerbot_shuffle.cmake")
+  include("${CMAKE_SOURCE_DIR}/cmake/playerbot_accounts.cmake")
+  include("${CMAKE_SOURCE_DIR}/cmake/playerbot_hotpaths.cmake")
 
 else()
   if(EXISTS ${CMAKE_CURRENT_SOURCE_DIR}/modules/PlayerBots)
@@ -66,30 +71,14 @@ if(BUILD_MODULES)
   foreach(INDEX RANGE ${MODULE_COUNT})
     list(GET MODULE_NAMES ${INDEX} MODULE_NAME)
     list(GET MODULE_URLS ${INDEX} MODULE_URL)
-  
+
     string(TOLOWER ${MODULE_NAME} LOWER_MODULE_NAME)
     if(BUILD_MODULE_${MODULE_NAME} OR BUILD_${MODULE_NAME})
-      include(FetchContent)
-
-      FetchContent_Declare(
-        ${LOWER_MODULE_NAME}
-		SOURCE_DIR "${CMAKE_CURRENT_SOURCE_DIR}/modules/${LOWER_MODULE_NAME}"
-        GIT_REPOSITORY "${MODULE_URL}"
-        GIT_TAG "main"
-      )
-
-	  FetchContent_GetProperties(${LOWER_MODULE_NAME})
-      if(NOT ${LOWER_MODULE_NAME}_POPULATED)
-        message(STATUS "Fetching ${LOWER_MODULE_NAME} module...")
-        FetchContent_Populate(${LOWER_MODULE_NAME})
-        message(STATUS "${LOWER_MODULE_NAME} module fetched and populated in ${CMAKE_CURRENT_SOURCE_DIR}/modules/${LOWER_MODULE_NAME}")
+      set(MODULE_SOURCE_DIR ${CMAKE_CURRENT_SOURCE_DIR}/modules/${LOWER_MODULE_NAME})
+      if(NOT EXISTS ${MODULE_SOURCE_DIR}/CMakeLists.txt)
+        message(FATAL_ERROR "Requested module ${LOWER_MODULE_NAME} is not vendored in src/modules")
       endif()
-	
-      add_subdirectory(${CMAKE_SOURCE_DIR}/src/modules/${LOWER_MODULE_NAME})
-    else()
-      if(EXISTS ${CMAKE_CURRENT_SOURCE_DIR}/modules/${LOWER_MODULE_NAME})
-        file(REMOVE_RECURSE ${CMAKE_CURRENT_SOURCE_DIR}/modules/${LOWER_MODULE_NAME})
-      endif()
+      add_subdirectory(${MODULE_SOURCE_DIR})
     endif()
   endforeach()
 endif()

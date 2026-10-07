@@ -20,6 +20,8 @@
 #define MANGOSSERVER_ASYNC_SOCKET
 
 #include "Platform/Define.h"
+#include "Memory/WriteBudget.h"
+#include "Config/Config.h"
 #include <boost/asio.hpp>
 #include <boost/enable_shared_from_this.hpp>
 #include "boost/lexical_cast.hpp"
@@ -68,6 +70,7 @@ namespace MaNGOS
         private:
             struct PendingWrite
             {
+                std::shared_ptr<ManTech::WriteBudget::Token> budget;
                 std::shared_ptr<std::vector<char>> data;
                 std::function<void(const boost::system::error_code&, std::size_t)> callback;
             };
@@ -80,6 +83,12 @@ namespace MaNGOS
             boost::asio::ip::tcp::socket m_socket;
             boost::asio::strand<boost::asio::io_context::executor_type> m_writeStrand;
             std::deque<PendingWrite> m_writeQueue;
+            ManTech::WriteBudget m_writeBudget;
+            std::atomic<bool> m_budgetExceeded{false};
+            std::size_t m_socketWriteLimit = 8 * 1024 * 1024;
+            std::size_t m_globalWriteLimit = 256 * 1024 * 1024;
+            std::mutex m_bufferMutex;
+            std::vector<char> m_reusableBuffer;
 
             std::mutex m_closeMutex;
             std::string m_address;
@@ -92,7 +101,8 @@ namespace MaNGOS
     MaNGOS::AsyncSocket<SocketType>::AsyncSocket(boost::asio::io_context& io_context) : m_socket(io_context), m_writeStrand(boost::asio::make_strand(io_context)), m_address("0.0.0.0"),
         m_remoteAddress(boost::asio::ip::address()), m_remotePort(0)
     {
-
+        m_socketWriteLimit = static_cast<std::size_t>(std::max(64, sConfig.GetIntDefault("Network.MaxPendingWriteKiB", 8192))) * 1024;
+        m_globalWriteLimit = static_cast<std::size_t>(std::max(1024, sConfig.GetIntDefault("Network.MaxGlobalPendingWriteKiB", 262144))) * 1024;
     }
 
     template <typename SocketType>
@@ -127,7 +137,22 @@ namespace MaNGOS
     void MaNGOS::AsyncSocket<SocketType>::Write(const char* buffer, size_t length, std::function<void(const boost::system::error_code&, std::size_t)>&& callback)
     {
         PendingWrite write;
-        write.data = std::make_shared<std::vector<char>>(buffer, buffer + length);
+        write.budget = m_writeBudget.Acquire(std::max<std::size_t>(length, 128), m_socketWriteLimit, m_globalWriteLimit);
+        if (!write.budget)
+        {
+            if (!m_budgetExceeded.exchange(true))
+                sLog.outError("ARCH4_NETWORK write budget exceeded; disconnecting slow receiver");
+            Close();
+            if (callback)
+                callback(boost::asio::error::no_buffer_space, 0);
+            return;
+        }
+        write.data = std::make_shared<std::vector<char>>();
+        {
+            std::lock_guard<std::mutex> guard(m_bufferMutex);
+            write.data->swap(m_reusableBuffer);
+        }
+        write.data->assign(buffer, buffer + length);
         write.callback = std::move(callback);
 
         auto self = this->shared_from_this();
@@ -156,8 +181,19 @@ namespace MaNGOS
     template <typename SocketType>
     void MaNGOS::AsyncSocket<SocketType>::StartNextWrite()
     {
-        if (m_writeQueue.empty() || IsClosed())
+        if (m_writeQueue.empty())
             return;
+        if (IsClosed())
+        {
+            // Callbacks may own the socket. Release every queued write even if a
+            // successful completion callback closed it before the next write.
+            auto abandoned = std::move(m_writeQueue);
+            m_writeQueue.clear();
+            for (auto& pending : abandoned)
+                if (pending.callback)
+                    pending.callback(boost::asio::error::operation_aborted, 0);
+            return;
+        }
 
         auto self = this->shared_from_this();
         PendingWrite& write = m_writeQueue.front();
@@ -173,11 +209,21 @@ namespace MaNGOS
 
                     if (error)
                     {
-                        socket->m_writeQueue.clear();
                         socket->Close();
+                        socket->StartNextWrite();
                         return;
                     }
 
+                    // Keep at most one modest buffer; large bursts release their capacity.
+                    if (completed.data->capacity() <= 64 * 1024)
+                    {
+                        completed.data->clear();
+                        std::lock_guard<std::mutex> guard(socket->m_bufferMutex);
+                        if (socket->m_reusableBuffer.capacity() < completed.data->capacity())
+                            socket->m_reusableBuffer.swap(*completed.data);
+                    }
+                    completed.data.reset();
+                    completed.budget.reset();
                     socket->StartNextWrite();
                 }));
     }

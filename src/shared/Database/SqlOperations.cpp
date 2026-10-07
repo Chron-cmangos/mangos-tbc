@@ -1,3 +1,4 @@
+#include "Util/DevDiagnostics.h"
 /*
  * This file is part of the CMaNGOS Project. See AUTHORS file for Copyright information
  *
@@ -32,6 +33,7 @@
 
 bool SqlPlainRequest::Execute(SqlConnection* conn)
 {
+    MANTECH_DIAG_SCOPE(DbExecute,32,"SqlPlainRequest");
     /// just do it
     LOCK_DB_CONN(conn);
     return conn->Execute(m_sql);
@@ -48,6 +50,7 @@ SqlTransaction::~SqlTransaction()
 
 bool SqlTransaction::Execute(SqlConnection* conn)
 {
+    MANTECH_DIAG_SCOPE(DbExecute,32,"SqlTransaction");
     if (m_queue.empty())
         return true;
 
@@ -79,8 +82,20 @@ SqlPreparedRequest::~SqlPreparedRequest()
     delete m_param;
 }
 
+std::size_t SqlPreparedRequest::RetainedBytes() const
+{
+    // String capacity is an upper bound because small strings can be inline.
+    std::size_t bytes = sizeof(*this);
+    if (m_param) {
+        bytes += sizeof(*m_param) + m_param->params().capacity()*sizeof(SqlStmtFieldData);
+        for (auto const& field : m_param->params()) bytes += field.StringCapacity();
+    }
+    return bytes;
+}
+
 bool SqlPreparedRequest::Execute(SqlConnection* conn)
 {
+    MANTECH_DIAG_SCOPE(DbExecute,32,"SqlPreparedRequest");
     LOCK_DB_CONN(conn);
     return conn->ExecuteStmt(m_nIndex, *m_param);
 }
@@ -89,6 +104,7 @@ bool SqlPreparedRequest::Execute(SqlConnection* conn)
 
 bool SqlQuery::Execute(SqlConnection* conn)
 {
+    MANTECH_DIAG_SCOPE(DbExecute,32,"SqlQuery");
     if (!m_callback || !m_queue)
         return false;
 

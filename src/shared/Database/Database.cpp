@@ -195,10 +195,20 @@ void Database::ThreadEnd()
 {
 }
 
-void Database::ProcessResultQueue()
+void Database::ProcessResultQueue(uint32 maxMilliseconds)
 {
     if (m_pResultQueue)
-        m_pResultQueue->Update();
+        m_pResultQueue->Update(maxMilliseconds);
+}
+
+size_t Database::GetPendingResultCount() const
+{
+    return m_pResultQueue ? m_pResultQueue->PendingCount() : 0;
+}
+
+size_t Database::GetPendingAsyncOperationCount() const
+{
+    return m_threadBody ? m_threadBody->PendingCount() : 0;
 }
 
 void Database::escape_string(std::string& str)

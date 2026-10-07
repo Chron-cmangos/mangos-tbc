@@ -253,9 +253,8 @@ else()
   target_link_libraries(${LIBRARY_NAME} PUBLIC ${MYSQL_LIBRARY})
   if (WIN32)
     # Add provided dependency lib to dev folder
-    string(REGEX REPLACE "/" "\\\\" LibFolder ${DEV_PROVIDED_LIBS_FOLDER})
     add_custom_command(TARGET ${LIBRARY_NAME} POST_BUILD
-      COMMAND xcopy /Y \"${LibFolder}\\*.dll\" \"${DEV_BIN_DIR}\\*.dll\")
+      COMMAND ${CMAKE_COMMAND} -E copy_directory_if_different "${DEV_PROVIDED_LIBS_FOLDER}" "${DEV_BIN_DIR}")
   endif()
 endif()
 

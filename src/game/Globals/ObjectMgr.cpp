@@ -2059,7 +2059,8 @@ void ObjectMgr::LoadCreatureModelRace()
 
 void ObjectMgr::LoadCreatureConditionalSpawn()
 {
-    sCreatureConditionalSpawnStore.Load();
+    // Faction-dependent spawn overrides are optional; zero overrides is valid.
+    sCreatureConditionalSpawnStore.Load(false);
 
     // post processing
     for (uint32 i = 1; i < sCreatureConditionalSpawnStore.GetMaxEntry(); ++i)
@@ -3020,7 +3021,18 @@ void ObjectMgr::LoadItemPrototypes()
         }
         else
         {
-            sLog.outErrorDb("Item (Entry: %u) not correct (not listed in list of existing items).", i);
+            // These server-defined items intentionally have no stock Item.dbc row.
+            // Keep the warning for every other item; subsequent validation still runs.
+            bool const mantechItem =
+                (i == 65000 && proto->Spells[0].SpellId == 1206) ||
+                (i == 65001 && proto->Spells[0].SpellId == 28020) ||
+                (i == 65002 && proto->Spells[0].SpellId == 21342) ||
+                (i == 65003 && proto->Spells[0].SpellId == 22721) ||
+                (i == 65004 && proto->Spells[0].SpellId == 7977);
+            if (mantechItem)
+                sLog.outString("ManTech custom item %u loaded from item_template (no stock Item.dbc entry).", i);
+            else
+                sLog.outErrorDb("Item (Entry: %u) not correct (not listed in list of existing items).", i);
         }
 
         if (proto->Class >= MAX_ITEM_CLASS)
@@ -9597,18 +9609,7 @@ void ObjectMgr::LoadTrainers(char const* tableName, bool isTemplates)
         for (int i = 0; i < MAX_EFFECT_INDEX; ++i)
         {
             if (spellinfo->Effect[i] == SPELL_EFFECT_LEARN_SPELL && spellinfo->EffectTriggerSpell[i])
-            {
-                switch (spellinfo->EffectImplicitTargetA[i])
-                {
-                    case TARGET_NONE:
-                    case TARGET_UNIT_CASTER:
-                        // ...looks like the specified spell is actually a trainer's spell casted on a player to teach another spell
-                        // Trainer's spells can teach more than one spell (up to number of effects)
-                        // Self-casts listed in trainer's lists usually come from recipes which were made trainable in a later patch
-                        trainerSpell.learnedSpell.push_back(spellinfo->EffectTriggerSpell[i]);
-                        break;
-                }
-            }
+                trainerSpell.learnedSpell.push_back(spellinfo->EffectTriggerSpell[i]);
         }
 
         for (auto& learnedSpell : trainerSpell.learnedSpell)
@@ -9799,7 +9800,8 @@ void ObjectMgr::LoadVendors()
                 {
                     for (auto& itemVendor : dataVendor.m_items)
                     {
-                        if (itemTemplate->item == itemVendor->item)
+                        if (itemTemplate->item == itemVendor->item && itemTemplate->conditionId == itemVendor->conditionId &&
+                            itemTemplate->ExtendedCost == itemVendor->ExtendedCost)
                             sLog.outErrorDb("Creature (Entry: %u) has VendorTemplateId = %u that has same item in both npc_vendor and npc_vendor_template.", cInfo->Entry, cInfo->VendorTemplateId);
                     }
                 }

@@ -796,6 +796,7 @@ void WorldSession::HandleUnstablePet(WorldPacket& recv_data)
             SqlStatement moveCurrent = CharacterDatabase.CreateStatement(MoveCurrentPet_ID, "UPDATE character_pet SET slot = ? WHERE owner = ? AND id = ?");
             moveCurrent.PExecute(slot, _player->GetGUIDLow(), currentFields[0].GetUInt32());
         }
+
         static SqlStatementID MakeSelectedPetCurrent_ID;
         SqlStatement makeCurrent = CharacterDatabase.CreateStatement(MakeSelectedPetCurrent_ID, "UPDATE character_pet SET slot = ? WHERE owner = ? AND id = ?");
         makeCurrent.PExecute(uint32(currentHealth ? PET_SAVE_AS_CURRENT : PET_SAVE_NOT_IN_SLOT), _player->GetGUIDLow(), petnumber);

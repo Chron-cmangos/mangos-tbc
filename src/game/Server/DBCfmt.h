@@ -114,9 +114,9 @@ const char TotemCategoryEntryfmt[] = "nxxxxxxxxxxxxxxxxxii";
 const char WMOAreaTableEntryfmt[] = "niiixxxxxiissssssssssssssssx";
 const char WorldMapAreaEntryfmt[] = "xinxffffi";
 #ifdef ENABLE_MODULES
-const char WorldMapOverlayEntryfmt[]="nxiiiixxxxxxxxxxx";
+const char WorldMapOverlayEntryfmt[] = "nxiiiixxxxxxxxxxx";
 #else
-// const char WorldMapOverlayEntryfmt[]="nxiiiixxxxxxxxxxx";
+// const char WorldMapOverlayEntryfmt[] = "nxiiiixxxxxxxxxxx";
 #endif
 const char WorldSafeLocsEntryfmt[] = "nifffxxxxxxxxxxxxxxxxx";
 

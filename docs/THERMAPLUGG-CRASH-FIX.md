@@ -1,0 +1,9 @@
+# Thermaplugg targetless bomb activation crash
+
+Classic dump mangosd.exe.5636.dmp records an access violation at 2026-09-09 22:06:28 UTC. The crashing thread dereferences a null WorldObject inside ActivateBombThermaplugg::OnEffectExecute, called from Spell::DoAllTargetlessEffects. The Spell object identifies spell 11511 (Activate Bomb A). The handler requests GetUnitTarget() even though Activate Bomb A/B are destination spells.
+
+The previous EXE/PDB backups disappeared from the share during investigation. The stack was unwound with the dumped executable's runtime unwind table. Complete functions were uniquely matched to retained current code after normalizing only relative branch/call and RIP-relative displacements, then named with that retained build's symbols. No old addresses were blindly interpreted using a new PDB. Metadata, raw unwind and instruction-match evidence are retained in the investigation artifact.
+
+All three baseline handlers matched their recorded CMaNGOS upstream versions before this change. The explicit crash fix uses the spell caster's instance and safely ignores absent caster/instance context. Existing bomb-face choice, phase timers, summoning and encounter difficulty are unchanged. This is a specific authorized native encounter crash fix, not a resumption of encounter redesign. No upstream PR is created.
+
+Regression fixtures execute the actual handler with no unit target and verify one bomb-face activation in the caster's instance; missing/wrong instances and a missing caster do not crash. All three expansion fixtures passed. Native build and deployed package checks are recorded separately; a live boss pull is not claimed tested. No SQL, addon or configuration changes are required. All previous recruitment/LFG, log and gear-refill fixes remain included.

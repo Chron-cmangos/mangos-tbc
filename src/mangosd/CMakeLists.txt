@@ -59,6 +59,16 @@ target_link_libraries(${EXECUTABLE_NAME}
   cmangos-compile-option-interface
 )
 
+if(MANTECH_USE_MIMALLOC)
+  if(NOT MANTECH_PROFILE_ALLOCATIONS)
+    target_sources(${EXECUTABLE_NAME} PRIVATE Arch4Allocator.cpp)
+  endif()
+  target_compile_definitions(${EXECUTABLE_NAME} PRIVATE MANTECH_USE_MIMALLOC=1)
+  target_link_libraries(${EXECUTABLE_NAME} mimalloc-static)
+  target_link_libraries(game PRIVATE mimalloc-static)
+  target_compile_definitions(game PRIVATE MANTECH_USE_MIMALLOC=1)
+endif()
+
 if(WIN32)
   target_link_libraries(${EXECUTABLE_NAME}
     winmm
@@ -97,7 +107,7 @@ if(WIN32)
   
   if(BUILD_PLAYERBOTS)
     add_custom_command(TARGET ${EXECUTABLE_NAME} POST_BUILD
-	  COMMAND ${CMAKE_COMMAND} -E copy_if_different \"${CMAKE_SOURCE_DIR}/src/modules/PlayerBots/playerbot/aiplayerbot.conf.dist.in.tbc\" \"$<TARGET_FILE_DIR:${EXECUTABLE_NAME}>/aiplayerbot.conf.dist\")
+	  COMMAND ${CMAKE_COMMAND} -E copy_if_different \"${playerbots_SOURCE_DIR}/playerbot/aiplayerbot.conf.dist.in.tbc\" \"$<TARGET_FILE_DIR:${EXECUTABLE_NAME}>/aiplayerbot.conf.dist\")
   endif()
 
   if(BUILD_AHBOT)
@@ -150,3 +160,15 @@ endif()
 
 install(FILES ${CMAKE_SOURCE_DIR}/src/game/Anticheat/module/anticheat.conf.dist.in DESTINATION ${CONF_DIR} RENAME anticheat.conf.dist)
 install(DIRECTORY ${CMAKE_SOURCE_DIR}/src/game/Anticheat/module/warden_modules DESTINATION ${BIN_DIR})
+
+if(MANTECH_PROFILE_ALLOCATIONS)
+  if(NOT WIN32)
+    message(FATAL_ERROR "The sampled allocation profiler currently requires Windows")
+  endif()
+  target_sources(${EXECUTABLE_NAME} PRIVATE AllocationProfile.cpp)
+  target_link_libraries(${EXECUTABLE_NAME} dbghelp)
+endif()
+
+if(WIN32 AND MANTECH_DEV_DIAGNOSTICS)
+  target_link_libraries(${EXECUTABLE_NAME} psapi)
+endif()

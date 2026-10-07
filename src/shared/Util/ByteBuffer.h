@@ -26,8 +26,8 @@
 class ByteBufferException
 {
     public:
-        ByteBufferException(bool _add, size_t _pos, size_t _esize, size_t _size)
-            : add(_add), pos(_pos), esize(_esize), size(_size)
+        ByteBufferException(bool _add, size_t _pos, size_t _esize, size_t _size, bool _invalidUtf8 = false)
+            : add(_add), invalidUtf8(_invalidUtf8), pos(_pos), esize(_esize), size(_size)
         {
             PrintPosError();
         }
@@ -35,6 +35,7 @@ class ByteBufferException
         void PrintPosError() const;
     private:
         bool add;
+        bool invalidUtf8;
         size_t pos;
         size_t esize;
         size_t size;
@@ -111,12 +112,6 @@ class ByteBuffer
         ByteBuffer& operator<<(uint8 value)
         {
             append<uint8>(value);
-            return *this;
-        }
-
-        ByteBuffer& operator<<(char value)
-        {
-            append<char>(value);
             return *this;
         }
 
@@ -217,12 +212,6 @@ class ByteBuffer
         ByteBuffer& operator>>(uint64& value)
         {
             value = read<uint64>();
-            return *this;
-        }
-
-        ByteBuffer& operator>>(char& value)
-        {
-            value = read<char>();
             return *this;
         }
 
@@ -350,7 +339,7 @@ class ByteBuffer
 
             // Detect invalid unicode sequence in string and raise appropriate exception
             if (utf8 && !utf8::is_valid(value.begin(), value.end()))
-                throw ByteBufferException(false, _rpos, value.length(), size());
+                throw ByteBufferException(false, _rpos, value.length(), size(), true);
         }
 
         uint64 readPackGUID()

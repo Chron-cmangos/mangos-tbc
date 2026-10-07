@@ -19,6 +19,7 @@
 #ifndef MANGOS_CREATURE_EAI_H
 #define MANGOS_CREATURE_EAI_H
 
+#include "Memory/MemoryLedger.h"
 #include "Common.h"
 #include "Entities/Creature.h"
 #include "AI/BaseAI/CreatureAI.h"
@@ -870,9 +871,11 @@ typedef std::unordered_map<uint32, CreatureEventAI_Summon> CreatureEventAI_Summo
 
 struct CreatureEventAIHolder
 {
-    CreatureEventAIHolder(CreatureEventAI_Event p) : event(p), timer(0), enabled(true), inProgress(false), eventTarget(nullptr) {}
+    CreatureEventAIHolder(CreatureEventAI_Event const& p) : event(p), timer(0), enabled(true), inProgress(false), eventTarget(nullptr) { ManTech::MemoryLedger::Add(ManTech::MemoryKind::EventHolders,sizeof(CreatureEventAIHolder)); }
+    CreatureEventAIHolder(CreatureEventAIHolder const& other) : event(other.event), timer(other.timer), enabled(other.enabled), inProgress(other.inProgress), eventTarget(other.eventTarget) { ManTech::MemoryLedger::Add(ManTech::MemoryKind::EventHolders,sizeof(CreatureEventAIHolder)); }
+    ~CreatureEventAIHolder() { ManTech::MemoryLedger::Remove(ManTech::MemoryKind::EventHolders,sizeof(CreatureEventAIHolder)); }
 
-    CreatureEventAI_Event event;
+    CreatureEventAI_Event const& event;
     uint32 timer;
     bool enabled;
     bool inProgress;
@@ -950,6 +953,8 @@ class CreatureEventAI : public CreatureAI
 
         // Variables used by Events themselves
         typedef std::vector<CreatureEventAIHolder> CreatureEventAIList;
+        std::shared_ptr<CreatureEventAI_Event_Map const> m_entryDefinitions;
+        std::shared_ptr<CreatureEventAI_Event_Map const> m_guidDefinitions;
         CreatureEventAIList m_CreatureEventAIList;          // Holder for events (stores enabled, time, and eventid)
         std::vector<std::vector<std::reference_wrapper<CreatureEventAIHolder>>> m_creatureEventAITempList; // Holder for events that are ready to go off
         uint32 m_depth;

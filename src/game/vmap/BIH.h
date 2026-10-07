@@ -81,6 +81,7 @@ class BIH
         }
 
     public:
+        std::size_t DynamicBytes() const { return (tree.capacity()+objects.capacity())*sizeof(uint32); }
         BIH() {init_empty();}
         template< class BoundsFunc, class PrimArray >
         void build(const PrimArray& primitives, BoundsFunc& getBounds, uint32 leafSize = 3, bool printStats = false)
@@ -125,7 +126,6 @@ class BIH
             float intervalMax = -1.f;
             Vector3 org = r.origin();
             Vector3 dir = r.direction();
-
             Vector3 invDir;
             for (int i = 0; i < 3; ++i)
             {

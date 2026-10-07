@@ -135,13 +135,13 @@ void WorldSocket::SendPacket(const WorldPacket& pct)
         std::memcpy(fullMessage->data(), header.data(), header.headerSize()); // copy header
         std::memcpy((fullMessage->data() + header.headerSize()), reinterpret_cast<const char*>(pct.contents()), pct.size()); // copy packet
         auto self(shared_from_this());
-        Write(fullMessage->data(), fullMessage->size(), [self, fullMessage](const boost::system::error_code& /*error*/, std::size_t /*written*/) {});
+        Write(fullMessage->data(), fullMessage->size(), [self](const boost::system::error_code& /*error*/, std::size_t /*written*/) {});
     }
     else
     {
         std::shared_ptr<ServerPktHeader> sharedHeader = std::make_shared<ServerPktHeader>(header);
         auto self(shared_from_this());
-        Write(sharedHeader->data(), sharedHeader->headerSize(), [self, sharedHeader](const boost::system::error_code& /*error*/, std::size_t /*written*/) {});
+        Write(sharedHeader->data(), sharedHeader->headerSize(), [self](const boost::system::error_code& /*error*/, std::size_t /*written*/) {});
     }
 }
 
@@ -150,7 +150,7 @@ bool WorldSocket::OnOpen()
     boost::system::error_code ec;
     if (sConfig.GetBoolDefault("Network.TcpNodelay", true))
         GetAsioSocket().set_option(boost::asio::ip::tcp::no_delay(true), ec);
-    
+
     int32 const sendBuffer = sConfig.GetIntDefault("Network.OutKBuff", -1);
     if (sendBuffer > 0)
         GetAsioSocket().set_option(boost::asio::socket_base::send_buffer_size(sendBuffer), ec);
