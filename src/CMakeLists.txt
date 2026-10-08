@@ -28,8 +28,8 @@ if(BUILD_PLAYERBOTS)
   FetchContent_Declare(
     PlayerBots
     SOURCE_DIR "${CMAKE_CURRENT_SOURCE_DIR}/modules/PlayerBots"
-    GIT_REPOSITORY "https://github.com/T-imothy/playerbots.git"
-        GIT_TAG "1a6ab21ca9ef1b702dd093acbcc71dc304848a82" # ManTech baseline: public bot transfer between raid instances
+    GIT_REPOSITORY "https://github.com/Chron-cmangos/playerbots.git"
+        GIT_TAG "playerbot-test2"
   )
 
   FetchContent_GetProperties(PlayerBots)
