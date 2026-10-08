@@ -731,7 +731,7 @@ void npc_doctorAI::UpdateAI(const uint32 uiDiff)
                             return;
                     }
 
-                    if (Creature* Patient = m_creature->SummonCreature(patientEntry, (*itr)->x, (*itr)->y, (*itr)->z, (*itr)->o, TEMPSPAWN_TIMED_OOC_OR_CORPSE_DESPAWN, 5000))
+                    if (Creature* Patient = m_creature->SummonCreature(patientEntry, (*itr)->x, (*itr)->y, (*itr)->z, (*itr)->o, TEMPSPAWN_TIMED_OOC_OR_CORPSE_DESPAWN, 50000))
                     {
                         totalSpawned++;
 
