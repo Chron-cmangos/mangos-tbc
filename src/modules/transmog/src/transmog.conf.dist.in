@@ -33,7 +33,45 @@
 
 Transmog.Enable = 0
 Transmog.CostFee = 0
-Transmog.CostMultiplier = 1.0
+Transmog.CostMultiplier = 0
 Transmog.TokenRequired = 0
 Transmog.TokenEntry = 0
 Transmog.TokenAmount = 1
+
+###################################################################################################
+#   MIXED ARMOR TRANSMOGRIFICATION SETTINGS
+#
+#   Transmog.AllowMixedArmorTypes
+#       Allow transmogrifying any armor type over another (e.g., Cloth look on Plate armor).
+#       Default: 0 (Disabled - Strict matching)
+#                1 (Enabled)
+Transmog.AllowMixedArmorTypes = 1
+
+#   Transmog.AllowLowerTiers
+#       Allow characters to use armor types lower than their maximum proficiency 
+#       (e.g., a Plate wearer can use Mail, Leather, or Cloth appearances).
+#       Default: 0 (Disabled)
+#                1 (Enabled)
+Transmog.AllowLowerTiers = 1
+
+#   Transmog.AllowChestRobeMismatch
+#       Allow mismatching Chest pieces and Robes (e.g., a short tunic look on a robe).
+#       Default: 1 (Enabled - Shares the chest slot layout)
+#                0 (Disabled)
+Transmog.AllowChestRobeMismatch = 1
+
+###################################################################################################
+#   MIXED WEAPON TRANSMOGRIFICATION SETTINGS
+#
+#   Transmog.AllowMixedWeaponTypes
+#       Controls weapon subclass transmog matching policies.
+#       Default: 0 (Strict - matching categories only)
+#                1 (Modern - Mix Swords, Axes, and Maces within 1H or 2H categories)
+#                2 (Loose - Complete subclass cross-matching freedom)
+Transmog.AllowMixedWeaponTypes = 1
+
+#   Transmog.AllowMixedWeaponHandedness
+#       Allows Main-Hand weapons to be skinned over Off-Hand weapons and vice versa.
+#       Default: 0 (Disabled)
+#                1 (Enabled)
+Transmog.AllowMixedWeaponHandedness = 0

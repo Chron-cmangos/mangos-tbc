@@ -65,6 +65,18 @@ namespace cmangos_module
         bool IsValidTransmog(const Player* player, const ItemPrototype* itemPrototype) const;
         bool IsValidTransmog(const Player* player, uint32 itemEntry) const;
 
+        // Mixed Armor Core Rule Validators
+        bool IsSubclassMismatchAllowed(const Player* player, const ItemPrototype* source, const ItemPrototype* target) const;
+        bool IsInvTypeMismatchAllowed(const ItemPrototype* source, const ItemPrototype* target) const;
+        bool IsTieredArmorSubclass(uint32 subclass) const;
+        bool PlayerCanWearMaxArmorTier(const Player* player, uint32 tier) const;
+
+        // Mixed Weapon Core Rule Validators
+        bool IsRangedWeapon(uint32 itemClass, uint32 subclass) const;
+        bool IsWeaponSubclassMismatchAllowed(const Player* player, const ItemPrototype* source, const ItemPrototype* target) const;
+        bool IsWeaponInvTypeMismatchAllowed(const ItemPrototype* source, const ItemPrototype* target) const;
+        bool PlayerHasWeaponSkill(const Player* player, uint32 subclass) const;
+
         void LoadActiveTransmogs(Player* player);
         void SendActiveTransmogs(const Player* player);
 
