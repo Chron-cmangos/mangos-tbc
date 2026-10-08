@@ -13,11 +13,8 @@ namespace cmangos_module
     , tokenRequired(false)
     , tokenEntry(0U)
     , tokenAmount(0U)
-    , allowMixedArmorTypes(false)
-    , allowLowerTiers(false)
-    , allowChestRobeMismatch(true)
     {
-    
+
     }
 
     bool TransmogModuleConfig::OnLoad()
@@ -28,23 +25,16 @@ namespace cmangos_module
         tokenRequired = config.GetBoolDefault("Transmog.TokenRequired", false);
         tokenEntry = config.GetIntDefault("Transmog.TokenEntry", 0U);
         tokenAmount = config.GetIntDefault("Transmog.TokenAmount", 1U);
-        
-        // Load Mixed Armor Options
-        allowMixedArmorTypes = config.GetBoolDefault("Transmog.AllowMixedArmorTypes", false);
-        allowLowerTiers = config.GetBoolDefault("Transmog.AllowLowerTiers", false);
-        allowChestRobeMismatch = config.GetBoolDefault("Transmog.AllowChestRobeMismatch", true);
 
-        // Load Mixed Weapon Options
-        allowMixedWeaponTypes = config.GetIntDefault("Transmog.AllowMixedWeaponTypes", 0U); // 0=Strict, 1=Modern, 2=Loose
-        allowMixedWeaponHandedness = config.GetBoolDefault("Transmog.AllowMixedWeaponHandedness", false);
+        if (!std::isfinite(costMultiplier) || costMultiplier < 0.0f) costMultiplier = 1.0f;
 
         if (tokenRequired)
         {
             auto result = WorldDatabase.PQuery("SELECT COUNT(*) FROM `item_template` WHERE `entry` = %u", tokenEntry);
-            if (!result)
+            if (!result || !(*result)[0].GetUInt32())
             {
-                sLog.outError("Transmog.TokenEntry (%u) does not exist. Disabling token requirements", tokenRequired);
-                tokenRequired = false;
+                sLog.outError("Transmog.TokenEntry (%u) does not exist. Disabling module", tokenEntry);
+                enabled = false;
             }
         }
 

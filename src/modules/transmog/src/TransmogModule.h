@@ -38,7 +38,6 @@ namespace cmangos_module
         void OnDeleteFromDB(uint32 playerId) override;
         void OnSetVisibleItemSlot(Player* player, uint8 slot, Item* item) override;
         void OnMoveItemFromInventory(Player* player, Item* item) override;
-        void OnStoreItem(Player* player, Item* item) override;
         void OnEquipItem(Player* player, Item* item) override;
 
         // Commands
@@ -50,9 +49,13 @@ namespace cmangos_module
         bool HandleApplyTransmog(WorldSession* session, const std::string& args);
 
     private:
+        bool ValidateRequest(const Player* player, const std::vector<std::pair<uint32, uint32>>& slots) const;
+        bool CanUseTransmogNpc(Player* player) const;
+        mutable std::recursive_mutex stateMutex;
+
         void UpdateItemAppearance(Player* player, Item* item) const;
         uint32 GetTransmogAppearance(const Item* item) const;
-        
+
         bool ApplyTransmog(Player* player, Item* item, uint32 transmogItemID, bool updateVisibility);
         bool RemoveTransmog(Player* player, Item* item, bool updateVisibility);
 
@@ -61,18 +64,6 @@ namespace cmangos_module
 
         bool IsValidTransmog(const Player* player, const ItemPrototype* itemPrototype) const;
         bool IsValidTransmog(const Player* player, uint32 itemEntry) const;
-
-        // Mixed Armor Core Rule Validators
-        bool IsSubclassMismatchAllowed(const Player* player, const ItemPrototype* source, const ItemPrototype* target) const;
-        bool IsInvTypeMismatchAllowed(const ItemPrototype* source, const ItemPrototype* target) const;
-        bool IsTieredArmorSubclass(uint32 subclass) const;
-        bool PlayerCanWearMaxArmorTier(const Player* player, uint32 tier) const;
-
-        // Mixed Weapon Core Rule Validators
-        bool IsRangedWeapon(uint32 itemClass, uint32 subclass) const;
-        bool IsWeaponSubclassMismatchAllowed(const Player* player, const ItemPrototype* source, const ItemPrototype* target) const;
-        bool IsWeaponInvTypeMismatchAllowed(const ItemPrototype* source, const ItemPrototype* target) const;
-        bool PlayerHasWeaponSkill(const Player* player, uint32 subclass) const;
 
         void LoadActiveTransmogs(Player* player);
         void SendActiveTransmogs(const Player* player);
