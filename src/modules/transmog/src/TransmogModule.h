@@ -39,7 +39,6 @@ namespace cmangos_module
         void OnSetVisibleItemSlot(Player* player, uint8 slot, Item* item) override;
         void OnInspectEquipment(Player* inspector, Player* subject) override;
         void OnMoveItemFromInventory(Player* player, Item* item) override;
-        void OnStoreItem(Player* player, Item* item) override;
         void OnEquipItem(Player* player, Item* item) override;
 
         // Commands
