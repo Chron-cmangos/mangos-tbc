@@ -53,7 +53,13 @@ void EventProcessor::Update(uint32 p_time)
         else
         {
             Event->Abort(m_time);
-            delete Event;
+            // Abort can finish a spell while the unit still has its current-
+            // spell reference. Keep ownership until that reference is cleared,
+            // matching KillAllEvents(false), rather than dropping its owner.
+            if (Event->IsDeletable())
+                delete Event;
+            else
+                AddEvent(Event, CalculateTime(1), false);
         }
     }
 }

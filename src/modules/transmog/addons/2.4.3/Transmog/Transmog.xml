@@ -187,7 +187,7 @@
             <Layer level="ARTWORK">
                 <FontString name="$parentCollectedStatus" inherits="GameFontHighlightSmall" text="45/150">
                     <Size>
-                        <AbsDimension x="128" y="0"/>
+                        <AbsDimension x="260" y="0"/>
                     </Size>
                 </FontString>
             </Layer>
@@ -615,7 +615,7 @@
                     <Anchors>
                         <Anchor point="BOTTOM">
                             <Offset>
-                                <AbsDimension x="80" y="10"/>
+                                <AbsDimension x="80" y="0"/>
                             </Offset>
                         </Anchor>
                     </Anchors>
@@ -841,6 +841,47 @@
                     </OnClick>
                 </Scripts>
             </Button>
+
+            <Frame name="$parentSearch" hidden="true">
+                <Size><AbsDimension x="445" y="22"/></Size>
+                <Anchors>
+                    <Anchor point="TOPLEFT"><Offset><AbsDimension x="263" y="-79"/></Offset></Anchor>
+                </Anchors>
+                <Layers>
+                    <Layer level="OVERLAY">
+                        <FontString name="$parentLabel" inherits="GameFontNormalSmall" text="Search">
+                            <Anchors><Anchor point="LEFT"/></Anchors>
+                        </FontString>
+                    </Layer>
+                </Layers>
+                <Frames>
+                    <EditBox name="$parentInput" inherits="InputBoxTemplate" autoFocus="false">
+                        <Size><AbsDimension x="306" y="20"/></Size>
+                        <Anchors><Anchor point="LEFT"><Offset><AbsDimension x="55" y="0"/></Offset></Anchor></Anchors>
+                        <Scripts>
+                            <OnLoad>this:SetMaxLetters(80); this:SetText("");</OnLoad>
+                            <OnTextChanged>Transmog_SearchChanged(this:GetText());</OnTextChanged>
+                            <OnEnterPressed>this:ClearFocus();</OnEnterPressed>
+                            <OnEscapePressed>this:ClearFocus();</OnEscapePressed>
+                            <OnHide>this:ClearFocus();</OnHide>
+                            <OnEnter>
+                                GameTooltip:SetOwner(this, "ANCHOR_TOP");
+                                GameTooltip:SetText("Search collected appearances");
+                                GameTooltip:AddLine("Type part of an item name or an exact item ID.", 1, 1, 1);
+                                GameTooltip:Show();
+                            </OnEnter>
+                            <OnLeave>GameTooltip:Hide();</OnLeave>
+                        </Scripts>
+                    </EditBox>
+                    <Button name="$parentClear" inherits="UIPanelButtonTemplate" text="Clear">
+                        <Size><AbsDimension x="70" y="22"/></Size>
+                        <Anchors><Anchor point="RIGHT"/></Anchors>
+                        <Scripts>
+                            <OnClick>TransmogFrameSearchInput:SetText(""); TransmogFrameSearchInput:ClearFocus();</OnClick>
+                        </Scripts>
+                    </Button>
+                </Frames>
+            </Frame>
 
             <StatusBar name="$parentCollected" inherits="TransmogCollectedStatusBarTemplate" minValue="0" maxValue="1"
                        defaultValue="1" id="1">

@@ -26,6 +26,19 @@
 #include "World/World.h"
 #include "Util/Util.h"
 
+#ifdef ENABLE_PLAYERBOTS
+#include "playerbot/strategy/actions/EncounterSpellPolicy.h"
+
+namespace
+{
+    Player* EncounterBotOwner(Unit* unit)
+    {
+        Unit* owner = unit ? unit->GetMaster() : nullptr;
+        return owner && owner->IsPlayer() && static_cast<Player*>(owner)->GetPlayerbotAI() ? static_cast<Player*>(owner) : nullptr;
+    }
+}
+#endif
+
 int PetAI::Permissible(const Creature* creature)
 {
     if (creature->IsPet())
@@ -105,6 +118,9 @@ void PetAI::MoveInLineOfSight(Unit* who)
 
 void PetAI::AttackStart(Unit* who)
 {
+#ifdef ENABLE_PLAYERBOTS
+    if (ai::HasMajordomoDamageShield(EncounterBotOwner(m_unit),who)) return;
+#endif
     if (m_pet && m_pet->HasActionsDisabled())
         return;
 
@@ -167,6 +183,13 @@ void PetAI::UpdateAI(const uint32 diff)
     }
 
     Unit* victim = m_pet && m_pet->HasActionsDisabled() ? nullptr : m_unit->GetVictim();
+#ifdef ENABLE_PLAYERBOTS
+    if (Player* botOwner=EncounterBotOwner(m_unit))
+    {
+        ai::StopUnsafeEncounterOffense(botOwner,m_unit);
+        victim=m_unit->GetVictim();
+    }
+#endif
 
     CharmInfo* charmInfo = m_unit->GetCharmInfo();
     MANGOS_ASSERT(charmInfo);
@@ -570,6 +593,9 @@ bool PetAI::Cast(std::tuple<SpellEntry const*, Unit*, bool> spellWithTarget)
     // Unpack the pair, check the spell and try to cast.
     SpellEntry const* spellInfo; Unit* target; bool opener;
     std::tie(spellInfo, target, opener) = spellWithTarget;
+#ifdef ENABLE_PLAYERBOTS
+    if (ai::ShouldAvoidEncounterOffense(EncounterBotOwner(m_unit),m_unit,spellInfo,target)) return false;
+#endif
 
     uint32 flags = TRIGGERED_NORMAL_COMBAT_CAST;
     if (opener && m_creature->IsPlayerControlled())

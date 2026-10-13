@@ -1123,18 +1123,24 @@
       "available": true,
       "entry_trigger": 3528,
       "minimum_level": 50,
-      "note": "Blackrock Depths approach; follow the normal route or authorized shortcut to Molten Core.",
+      "note": "User-selected landing point in front of Lothos Riftwaker; preserves native NPC attunement and raid entry.",
       "point": {
-        "x": -7179.34,
-        "y": -921.212,
-        "z": 165.821,
-        "o": 5.09599,
-        "map": 0
+        "map": 0,
+        "x": -7511.33252,
+        "y": -1042.113159,
+        "z": 180.912277,
+        "o": 0.733098
       },
       "source": {
-        "table": "game_tele",
-        "id": 152,
-        "name": "BlackrockDepths"
+        "type": "approved live GPS screenshot",
+        "date": "2026-10-12",
+        "npc_entry": 14387,
+        "verified_native_spawn": {
+          "map": 0,
+          "x": -7508.6298828125,
+          "y": -1039.8399658203125,
+          "z": 180.9949951171875
+        }
       },
       "inside": false,
       "reason": "ok"

@@ -1,7 +1,10 @@
 ## Interface: 20400
-## Title: Transmog
-## Notes: Transmog UI for CMangos Wow
+## Title: ManTech Transmog
+## Notes: Transmogrification collection and outfit UI for ManTech CMaNGOS. Requires the server transmog module and NPC.
+## Version: 1.0.0-ManTech.6
 ## SavedVariablesPerCharacter: transmogOutfits
 Transmog.lua
 Transmog.xml
 TransmogSets.lua
+
+GearTooltip.lua

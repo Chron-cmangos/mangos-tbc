@@ -119,6 +119,8 @@ if(BUILD_PLAYERBOTS)
 endif()
 
 find_package(Python3 REQUIRED COMPONENTS Interpreter)
+add_test(NAME ground_path_endpoint COMMAND ${Python3_EXECUTABLE} ${PROJECT_SOURCE_DIR}/tests/ground_path_regression.py ${PROJECT_SOURCE_DIR})
+add_test(NAME core_hound_reignite COMMAND ${Python3_EXECUTABLE} ${PROJECT_SOURCE_DIR}/tests/core_hound_reignite_regression.py ${PROJECT_SOURCE_DIR})
 add_test(NAME retention_visibility COMMAND ${Python3_EXECUTABLE} ${PROJECT_SOURCE_DIR}/contrib/tests/visibility_retention_regression.py)
 if(BUILD_PLAYERBOTS)
   add_test(NAME retention_travel COMMAND ${Python3_EXECUTABLE} ${_arch4_playerbots_source}/tests/travel_route_recovery_regression.py)
@@ -155,3 +157,90 @@ string(FIND "${_solo_source}" "    if (m_delayedActionTimer)
 math(EXPR _schedule_length "${_schedule_end} - ${_schedule_start}")
 string(SUBSTRING "${_solo_source}" ${_schedule_start} ${_schedule_length} _schedule_code)
 file(WRITE "${CMAKE_CURRENT_BINARY_DIR}/solo_ritual_schedule.inc" "${_schedule_code}")
+
+if(WIN32 AND MSVC)
+  add_executable(fatal_exit_probe fatal_exit_probe.cpp ${PROJECT_SOURCE_DIR}/src/shared/Platform/WheatyExceptionReport.cpp)
+  target_link_libraries(fatal_exit_probe PRIVATE shared dbghelp)
+  add_test(NAME fatal_exit_capture COMMAND ${Python3_EXECUTABLE} ${CMAKE_CURRENT_SOURCE_DIR}/fatal_exit_regression.py $<TARGET_FILE:fatal_exit_probe>)
+  set_tests_properties(fatal_exit_capture PROPERTIES TIMEOUT 180)
+endif()
+
+if(WIN32 AND MSVC AND BUILD_PLAYERBOTS)
+  add_test(NAME mc_garr_combat COMMAND ${Python3_EXECUTABLE} ${_arch4_playerbots_source}/tests/garr_combat_regression.py)
+  add_test(NAME mc_support_combat COMMAND ${Python3_EXECUTABLE} ${_arch4_playerbots_source}/tests/molten_core_support_regression.py)
+  add_test(NAME raid_pack_combat COMMAND ${Python3_EXECUTABLE} ${_arch4_playerbots_source}/tests/raid_pack_combat_regression.py)
+  set_tests_properties(mc_garr_combat mc_support_combat raid_pack_combat PROPERTIES TIMEOUT 180)
+endif()
+
+if(WIN32 AND MSVC)
+  add_test(NAME eternal_item_cooldown_override COMMAND ${Python3_EXECUTABLE} ${PROJECT_SOURCE_DIR}/tests/item_cooldown_override_regression.py ${PROJECT_SOURCE_DIR})
+endif()
+
+if(WIN32 AND MSVC AND BUILD_PLAYERBOTS)
+  add_test(NAME priest_power_infusion COMMAND ${Python3_EXECUTABLE} ${_arch4_playerbots_source}/tests/priest_power_infusion_regression.py)
+endif()
+
+if(WIN32 AND MSVC AND BUILD_PLAYERBOTS)
+  add_test(NAME mc_trash_priority COMMAND ${Python3_EXECUTABLE} ${_arch4_playerbots_source}/tests/mc_trash_priority_regression.py)
+  add_test(NAME encounter_damage_shield COMMAND ${Python3_EXECUTABLE} ${_arch4_playerbots_source}/tests/encounter_damage_pause_regression.py)
+endif()
+
+add_test(NAME ragnaros_phase COMMAND ${Python3_EXECUTABLE} ${CMAKE_SOURCE_DIR}/tests/ragnaros_phase_regression.py ${CMAKE_SOURCE_DIR})
+
+add_test(NAME event_abort_lifetime COMMAND ${Python3_EXECUTABLE} ${CMAKE_SOURCE_DIR}/tests/event_abort_lifetime_regression.py ${CMAKE_SOURCE_DIR})
+
+add_test(NAME corpse_team_condition COMMAND ${Python3_EXECUTABLE} ${CMAKE_SOURCE_DIR}/tests/corpse_team_condition_regression.py ${CMAKE_SOURCE_DIR})
+
+add_test(NAME native_spell_start_lifetime COMMAND ${Python3_EXECUTABLE} ${CMAKE_SOURCE_DIR}/tests/spell_start_lifetime_regression.py ${CMAKE_SOURCE_DIR})
+
+add_test(NAME eventai_ranged_metadata COMMAND ${Python3_EXECUTABLE} ${CMAKE_SOURCE_DIR}/tests/eventai_ranged_metadata_regression.py ${CMAKE_SOURCE_DIR})
+
+add_test(NAME portable_mailbox_faction COMMAND ${Python3_EXECUTABLE} ${CMAKE_SOURCE_DIR}/tests/portable_mailbox_faction_regression.py ${CMAKE_SOURCE_DIR})
+add_test(NAME socket_header_rejection COMMAND ${Python3_EXECUTABLE} ${CMAKE_SOURCE_DIR}/tests/socket_header_rejection_regression.py ${CMAKE_SOURCE_DIR})
+if(WIN32 AND MSVC AND BUILD_PLAYERBOTS)
+  add_test(NAME urgent_attack COMMAND ${Python3_EXECUTABLE} ${_arch4_playerbots_source}/tests/urgent_attack_regression.py)
+  add_test(NAME raid_entry_roster COMMAND ${Python3_EXECUTABLE} ${_arch4_playerbots_source}/tests/recruitment_regression.py ${_arch4_playerbots_source})
+endif()
+
+if(WIN32 AND MSVC AND BUILD_PLAYERBOTS)
+  add_test(NAME explicit_attack_wait COMMAND ${Python3_EXECUTABLE} ${_arch4_playerbots_source}/tests/explicit_attack_wait_regression.py)
+  add_test(NAME mc_pack_engagement COMMAND ${Python3_EXECUTABLE} ${_arch4_playerbots_source}/tests/mc_pack_engagement_regression.py)
+endif()
+if(WIN32 AND MSVC)
+  add_test(NAME transmog_equipment COMMAND ${Python3_EXECUTABLE} ${CMAKE_SOURCE_DIR}/tests/transmog_equipment_regression.py ${CMAKE_SOURCE_DIR})
+endif()
+
+if(WIN32 AND MSVC AND BUILD_PLAYERBOTS)
+  add_test(NAME party_pull_wakeup COMMAND ${Python3_EXECUTABLE} ${_arch4_playerbots_source}/tests/party_pull_wakeup_regression.py)
+endif()
+
+if(WIN32 AND MSVC AND BUILD_PLAYERBOTS)
+  add_test(NAME generic_raid_flee COMMAND ${Python3_EXECUTABLE} ${_arch4_playerbots_source}/tests/generic_raid_flee_regression.py)
+endif()
+
+if(WIN32 AND MSVC AND BUILD_PLAYERBOTS)
+  add_test(NAME mc_position_handoff COMMAND ${Python3_EXECUTABLE} ${_arch4_playerbots_source}/tests/mc_position_handoff_regression.py)
+  add_test(NAME raid_maintenance_combat COMMAND ${Python3_EXECUTABLE} ${_arch4_playerbots_source}/tests/raid_maintenance_combat_regression.py)
+  add_test(NAME mc_native_hazards COMMAND ${Python3_EXECUTABLE} ${_arch4_playerbots_source}/tests/molten_core_position_regression.py)
+  set_tests_properties(mc_position_handoff raid_maintenance_combat mc_native_hazards PROPERTIES TIMEOUT 180)
+endif()
+
+if(WIN32 AND MSVC AND BUILD_PLAYERBOTS)
+  add_test(NAME upstream_sync COMMAND ${Python3_EXECUTABLE} ${_arch4_playerbots_source}/tests/upstream_sync_regression.py)
+  set_tests_properties(upstream_sync PROPERTIES TIMEOUT 180)
+endif()
+
+if(WIN32 AND MSVC AND BUILD_PLAYERBOTS)
+  add_test(NAME lava_trash_control COMMAND ${Python3_EXECUTABLE} ${_arch4_playerbots_source}/tests/lava_trash_control_regression.py)
+  set_tests_properties(lava_trash_control PROPERTIES TIMEOUT 180)
+endif()
+
+if(WIN32 AND MSVC AND BUILD_PLAYERBOTS)
+  add_test(NAME mc_loose_trash COMMAND ${Python3_EXECUTABLE} ${_arch4_playerbots_source}/tests/mc_loose_trash_regression.py)
+  set_tests_properties(mc_loose_trash PROPERTIES TIMEOUT 180)
+endif()
+
+if(WIN32 AND MSVC AND BUILD_PLAYERBOTS)
+  add_test(NAME raid_regroup COMMAND ${Python3_EXECUTABLE} ${_arch4_playerbots_source}/tests/raid_regroup_regression.py)
+  set_tests_properties(raid_regroup PROPERTIES TIMEOUT 180)
+endif()

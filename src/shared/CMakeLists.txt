@@ -127,6 +127,8 @@ set(SRC_GRP_UTIL
     Util/ByteBuffer.h
     Util/ByteConverter.h
     Util/Errors.h
+    Util/FatalError.cpp
+    Util/FatalError.h
     Util/ProgressBar.cpp
     Util/ProgressBar.h
     Util/Timer.h

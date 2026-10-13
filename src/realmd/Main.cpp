@@ -78,6 +78,8 @@ boost::asio::io_context context;
 // Launch the realm server
 int main(int argc, char* argv[])
 {
+    MaNGOS::InstallFatalHandlers();
+
     std::string configFile, serviceParameter;
 
     boost::program_options::options_description desc("Allowed options");

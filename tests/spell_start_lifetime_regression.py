@@ -50,7 +50,7 @@ struct SpellEntry {unsigned Id=19438;};
 struct Aura {SpellEntry* GetSpellProto(){return nullptr;}};
 struct Item {unsigned GetEntry(){return 0;}};
 struct SpellCastTargets {};
-struct Unit {void SetNextUpdateTime(unsigned){} bool IsUnit(){return true;} bool IsNonMeleeSpellCasted(bool,bool,bool){return false;} EventProcessor m_events;unsigned GetTypeId(){return TYPEID_PLAYER;}unsigned GetGUIDLow(){return 1;}};
+struct Unit {void SetNextUpdateTime(unsigned){} bool IsUnit(){return true;} bool IsNonMeleeSpellCasted(bool,bool,bool){return false;} EventProcessor m_events;unsigned GetTypeId(){return TYPEID_PLAYER;}unsigned GetGUIDLow(){return 1;}unsigned GetEntry(){return 18970;}unsigned GetMapId(){return 530;}};
 struct SpellEvent;
 struct Spell {
  Unit* m_trueCaster;Unit* m_caster;SpellEvent* m_spellEvent=nullptr;
@@ -60,7 +60,7 @@ struct Spell {
  explicit Spell(Unit* u):m_trueCaster(u),m_caster(u){}
  ~Spell(){++destroyed;if(inStart)earlyDestroyed=true;}
  bool IsDeletable()const{return !m_executedCurrently&&!m_referencedFromCurrentSpell;}
- void SetExecutedCurrently(bool v){m_executedCurrently=v;}
+ bool IsExecutedCurrently()const{return m_executedCurrently;}void SetExecutedCurrently(bool v){m_executedCurrently=v;}
  Unit* GetCaster(){return m_caster;}int getState(){return m_spellState;}
  void cancel(){finish(false);}void finish(bool){m_spellState=SPELL_STATE_FINISHED;}
  void SendCastResult(SpellCastResult){}void SendInterrupted(SpellCastResult){}
@@ -106,6 +106,7 @@ int main(){
 # Destruction when the function's final local guard leaves scope is correct.
 # Observe only callback-time destruction (before the guard is unwound).
 code=code.replace('if(earlyDestroyed)throw std::runtime_error("spell destroyed before SpellStart returned");','')
+code='#include "'+(root/'src/shared/Memory/EntityLedger.h').resolve().as_posix()+'"\n'+code
 with tempfile.TemporaryDirectory(prefix='spell-start-regression-') as td:
     temp=Path(td);(temp/'Platform').mkdir()
     (temp/'Platform/Define.h').write_text('#pragma once\n#include <cstdint>\nusing uint64=uint64_t;using uint32=uint32_t;\n')

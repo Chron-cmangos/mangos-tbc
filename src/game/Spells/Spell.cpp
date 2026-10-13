@@ -1,3 +1,4 @@
+#include "Memory/EntityLedger.h"
 #include "Util/DevDiagnostics.h"
 /*
  * This file is part of the CMaNGOS Project. See AUTHORS file for Copyright information
@@ -390,6 +391,7 @@ Spell::Spell(WorldObject* caster, SpellEntry const* info, uint32 triggeredFlags,
     m_effectSkipMask(0),
     m_spellEvent(nullptr), m_spellLog(this), m_param1(0), m_param2(0), m_trueCaster(caster)
 {
+    ManTech::EntityLedger::Add(ManTech::EntityKind::Spells);
     MANGOS_ASSERT(caster != nullptr && info != nullptr);
     MANGOS_ASSERT(info == sSpellTemplate.LookupEntry<SpellEntry>(info->Id) && "`info` must be pointer to sSpellTemplate element");
 
@@ -510,6 +512,7 @@ Spell::Spell(WorldObject* caster, SpellEntry const* info, uint32 triggeredFlags,
 
 Spell::~Spell()
 {
+    ManTech::EntityLedger::Remove(ManTech::EntityKind::Spells);
     if (!m_IsTriggeredSpell && m_CastItem)
         m_CastItem->SetUsedInSpell(false);
 }
@@ -7737,6 +7740,7 @@ bool Spell::HaveTargetsForEffect(SpellEffectIndex effect) const
 
 SpellEvent::SpellEvent(Spell* spell) : BasicEvent()
 {
+    ManTech::EntityLedger::Add(ManTech::EntityKind::SpellEvents);
     m_Spell.reset(spell, [](Spell* toDelete)
     {
         if (toDelete->IsDeletable() || World::IsStopped())
@@ -7755,6 +7759,7 @@ SpellEvent::SpellEvent(Spell* spell) : BasicEvent()
 
 SpellEvent::~SpellEvent()
 {
+    ManTech::EntityLedger::Remove(ManTech::EntityKind::SpellEvents);
     if (m_Spell->getState() != SPELL_STATE_FINISHED)
         m_Spell->cancel();
 }

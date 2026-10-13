@@ -55,10 +55,6 @@ class Unit;
 #define VERTEX_SIZE             3
 #define INVALID_POLYREF         0
 
-// bound box of poly search area
-static float NearPolySearchBound[VERTEX_SIZE] = { 5.0f, 5.0f, 5.0f };
-static float FarPolySearchBound[VERTEX_SIZE] = { 10.0f, 10.0f, 10.0f };
-
 enum PathType
 {
     PATHFIND_BLANK          = 0x0000,   // path not built yet
@@ -139,6 +135,7 @@ class PathFinder
         void setStartPosition(const Vector3& point) { m_startPosition = point; }
         void setEndPosition(const Vector3& point) { m_actualEndPosition = point; m_endPosition = point; }
         void setActualEndPosition(const Vector3& point) { m_actualEndPosition = point; }
+        bool CanSkipPathPoint(const Vector3& previous, const Vector3& point, const Vector3& next) const;
         void NormalizePath();
         void SetCurrentNavMesh();
 
@@ -156,6 +153,7 @@ class PathFinder
         dtPolyRef getPolyByLocation(const float* point, float* distance);
         bool HaveTile(const Vector3& p) const;
 
+        void AdjustGroundPathEndpoint(float* point, dtPolyRef poly);
         void BuildPolyPath(const Vector3& startPos, const Vector3& endPos);
         void BuildPointPath(const float* startPoint, const float* endPoint);
         void BuildShortcut();

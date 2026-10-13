@@ -6,7 +6,7 @@ not simulated by these tests. Run a full core build separately.
 """
 from pathlib import Path
 import json,re,subprocess,sys,tempfile,os
-root=Path(sys.argv[1])
+root=Path(sys.argv[1]).resolve()
 source=(root/'src/game/Chat/PlayerTravel.cpp').read_text()
 assert re.search(r'duration_cast<std::chrono::seconds>\s*\(\s*std::chrono::steady_clock::now', source)
 source='\n'.join(line for line in source.splitlines() if not line.startswith('#include "'))

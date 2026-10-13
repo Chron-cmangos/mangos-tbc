@@ -24,6 +24,7 @@
 #include "Chat/Chat.h"
 #include "Tools/Language.h"
 #include "MotionGenerators/MovementGenerator.h"
+#include "Spells/SpellAuras.h"
 
 bool CreatureEventAIHolder::UpdateRepeatTimer(Creature* creature, uint32 repeatMin, uint32 repeatMax)
 {
@@ -101,6 +102,25 @@ CreatureEventAI::CreatureEventAI(Creature* creature) : CreatureAI(creature),
     m_timer(0), m_setId(-1), m_maxIndex(0), m_index(0), m_repeat(false)
 {
 
+}
+
+void CreatureEventAI::SpellListChanged()
+{
+    CreatureAI::SpellListChanged();
+    // Native spell-list changes reset the main-spell cache. Preserve legacy
+    // EventAI main/distance metadata from the admitted event definitions;
+    // rebuilding those definitions here would invalidate an active action.
+    for (auto const& holder : m_CreatureEventAIList)
+        for (uint32 index = 0; index < MAX_ACTIONS; ++index)
+        {
+            auto const& action = holder.event.action[index];
+            if (action.type != ACTION_T_CAST)
+                continue;
+            if (action.cast.castFlags & CAST_MAIN_SPELL)
+                AddMainSpell(action.cast.spellId);
+            if (action.cast.castFlags & CAST_DISTANCE_YOURSELF)
+                AddDistanceSpell(action.cast.spellId);
+        }
 }
 
 void CreatureEventAI::InitAI()
@@ -195,6 +215,9 @@ void CreatureEventAI::InitAI()
         const CreatureEventAI_Event_Vec& creatureEvent = creatureEventsGuidItr->second;
         processMap(creatureEvent);
     }
+    // Definitions may have changed on respawn. Rebuild metadata only after
+    // the complete admitted list exists, so an old main cast cannot survive.
+    SpellListChanged();
 }
 
 bool CreatureEventAI::IsTimerExecutedEvent(EventAI_Type type) const

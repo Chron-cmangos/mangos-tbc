@@ -3918,6 +3918,17 @@ void Player::RemoveArenaSpellCooldowns()
     RemoveSomeCooldown(cdCheck);
 }
 
+// Retire the old one-hour Eternal Quintessence timer only when its item
+// template explicitly disables both native cooldowns. Aqual and every other
+// item retain their stored/scripted cooldowns.
+static bool RetiredEternalQuintessenceCooldown(uint32 spellId, uint32 itemId, ItemPrototype const* proto)
+{
+    if (spellId != 21358 || itemId != 22754 || !proto) return false;
+    for (auto const& spell : proto->Spells)
+        if (spell.SpellId == spellId && spell.SpellCooldown == 0 && spell.SpellCategoryCooldown == 0) return true;
+    return false;
+}
+
 void Player::_LoadSpellCooldowns(std::unique_ptr<QueryResult> queryResult)
 {
     // some cooldowns can be already set at aura loading...
@@ -3954,6 +3965,9 @@ void Player::_LoadSpellCooldowns(std::unique_ptr<QueryResult> queryResult)
                     continue;
                 }
             }
+
+            if (RetiredEternalQuintessenceCooldown(spell_id, item_id, itemProto))
+                continue;
 
             TimePoint spellExpireTime = std::chrono::time_point_cast<std::chrono::milliseconds>(Clock::from_time_t(spell_time));
             TimePoint catExpireTime = std::chrono::time_point_cast<std::chrono::milliseconds>(Clock::from_time_t(cat_time));
@@ -19867,6 +19881,7 @@ void Player::SendInitialPacketsBeforeAddToMap()
     data << uint32(0);
     GetSession()->SendPacket(data);
 
+    GetSession()->SendItemQuerySingleResponse(22754); // Refresh the server-controlled Eternal Quintessence cooldown.
     GetSession()->SendItemQuerySingleResponse(65000); // Refresh the instant portable mailbox carrier.
     GetSession()->SendItemQuerySingleResponse(65003); // Refresh the cross-faction level-40 reward requirements.
     SendInitialSpells();

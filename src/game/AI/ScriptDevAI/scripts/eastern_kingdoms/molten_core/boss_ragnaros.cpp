@@ -24,6 +24,7 @@ EndScriptData */
 #include "AI/ScriptDevAI/include/sc_common.h"
 #include "molten_core.h"
 #include "AI/ScriptDevAI/base/CombatAI.h"
+#include "Chat/Chat.h"
 
 enum
 {
@@ -99,11 +100,15 @@ struct boss_ragnarosAI : public CombatAI
     bool m_bHasSubmergedOnce;
 
     GuidVector m_spawns;
+    GuidVector m_sons;
+    bool m_sonsSummoned;
 
     void Reset() override
     {
         CombatAI::Reset();
         m_uiAddCount = 0;
+        m_sons.clear();
+        m_sonsSummoned = false;
         m_phase = PHASE_EMERGED;
         m_rangeCheckState       = -1;
 
@@ -153,21 +158,38 @@ struct boss_ragnarosAI : public CombatAI
 
     void SummonedCreatureJustDied(Creature* summoned) override
     {
-        // If all Sons of Flame are dead, trigger emerge
-        if (summoned->GetEntry() == NPC_SON_OF_FLAME)
-        {
-            m_uiAddCount--;
+        // Old Sons may survive the 90-second timeout. Their later deaths must
+        // never shorten the new surface phase or a subsequent summon wave.
+        if (summoned->GetEntry() != NPC_SON_OF_FLAME ||
+            (m_phase != PHASE_SUBMERGING && m_phase != PHASE_SUBMERGED)) return;
+        auto son = std::find(m_sons.begin(), m_sons.end(), summoned->GetObjectGuid());
+        if (son == m_sons.end()) return;
+        m_sons.erase(son);
+        if (m_uiAddCount) --m_uiAddCount;
+        if (!m_uiAddCount && m_phase == PHASE_SUBMERGED)
+            ReduceTimer(RAGNAROS_PHASE_TRANSITION, 1000);
+    }
 
-            // If last add killed then emerge soonish
-            if (m_uiAddCount == 0)
-                ReduceTimer(RAGNAROS_PHASE_TRANSITION, 1000);
-        }
+    void GetAIInformation(ChatHandler& reader) override
+    {
+        CombatAI::GetAIInformation(reader);
+        reader.PSendSysMessage("Ragnaros phase=%u current-wave Sons=%u combat=%u submerge=%u passive=%u visual=%u victim=%u",
+            m_phase, m_uiAddCount, uint32(m_creature->IsInCombat()),
+            uint32(m_creature->HasAura(SPELL_RAGNA_SUBMERGE)), uint32(m_creature->HasAura(SPELL_SUBMERGE_EFFECT)),
+            uint32(m_creature->HasAura(SPELL_RAGNA_SUBMERGE_VISUAL)),
+            m_creature->GetVictim() ? m_creature->GetVictim()->GetGUIDLow() : 0u);
     }
 
     void JustSummoned(Creature* summoned) override
     {
         if (summoned->GetEntry() == NPC_SON_OF_FLAME)
         {
+            if (m_phase == PHASE_SUBMERGING || m_phase == PHASE_SUBMERGED)
+            {
+                m_sons.push_back(summoned->GetObjectGuid());
+                ++m_uiAddCount;
+                m_sonsSummoned = true;
+            }
             summoned->AI()->DoCastSpellIfCan(nullptr, SPELL_DOUBLE_ATTACK, CAST_TRIGGERED | CAST_AURA_NOT_PRESENT);
             summoned->AI()->DoCastSpellIfCan(nullptr, SPELL_LAVA_SHIELD, CAST_TRIGGERED | CAST_AURA_NOT_PRESENT);
             summoned->SetInCombatWithZone();
@@ -227,11 +249,13 @@ struct boss_ragnarosAI : public CombatAI
                 m_bHasSubmergedOnce = true;
 
                 // Summon 8 elementals around the boss
-                if (DoCastSpellIfCan(nullptr, SPELL_SUMMON_SONS_FLAME) == CAST_OK)
-                    m_uiAddCount = NB_ADDS_IN_SUBMERGE;
+                m_sons.clear();
+                m_uiAddCount = 0;
+                m_sonsSummoned = false;
+                m_phase = PHASE_SUBMERGING;
+                DoCastSpellIfCan(nullptr, SPELL_SUMMON_SONS_FLAME);
 
                 ResetCombatAction(RAGNAROS_PHASE_TRANSITION, 3000);
-                m_phase = PHASE_SUBMERGING;
                 DisableCombatAction(RAGNAROS_WRATH_OF_RAGNAROS);
                 DisableCombatAction(RAGNAROS_MIGHT_OF_RAGNAROS);
                 DisableCombatAction(RAGNAROS_MAGMA_BLAST);
@@ -242,7 +266,7 @@ struct boss_ragnarosAI : public CombatAI
             case PHASE_SUBMERGING:
             {
                 DoCastSpellIfCan(nullptr, SPELL_RAGNA_SUBMERGE, CAST_TRIGGERED);
-                ResetCombatAction(RAGNAROS_PHASE_TRANSITION, 90 * IN_MILLISECONDS);
+                ResetCombatAction(RAGNAROS_PHASE_TRANSITION, m_sonsSummoned && !m_uiAddCount ? 1000 : 90 * IN_MILLISECONDS);
                 m_phase = PHASE_SUBMERGED;
                 break;
             }

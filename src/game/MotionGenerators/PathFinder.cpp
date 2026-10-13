@@ -31,8 +31,17 @@
  #include "Metric/Metric.h"
 #endif
 
+#include <array>
 #include <limits>
 #include "Memory/ScratchLease.h"
+
+namespace
+{
+    // bound box of poly search area
+    std::array<float, VERTEX_SIZE> NearPolySearchBound { 5.0f, 5.0f, 5.0f };
+    std::array<float, VERTEX_SIZE> FarPolySearchBound { 10.0f, 10.0f, 10.0f };
+}
+
 ////////////////// PathFinder //////////////////
 PathFinder::PathFinder(const Unit* owner, bool ignoreNormalization) :
     m_type(PATHFIND_BLANK), m_useStraightPath(false), m_forceDestination(false), m_straightLine(false),
@@ -358,7 +367,7 @@ dtPolyRef PathFinder::getPolyByLocation(const float* point, float* distance)
     // try to get it by findNearestPoly()
     // first try with NearPolySearchBound
     float closestPoint[VERTEX_SIZE] = {0.0f, 0.0f, 0.0f};
-    dtStatus dtResult = m_navMeshQuery->findNearestPoly(point, NearPolySearchBound, &m_filter, &polyRef, closestPoint);
+    dtStatus dtResult = m_navMeshQuery->findNearestPoly(point, NearPolySearchBound.data(), &m_filter, &polyRef, closestPoint);
     if (dtStatusSucceed(dtResult) && polyRef != INVALID_POLYREF)
     {
         float newDistance = dtVdist(closestPoint, point);
@@ -373,7 +382,7 @@ dtPolyRef PathFinder::getPolyByLocation(const float* point, float* distance)
     // From dtNavMeshQuery::findNearestPoly: "If the search extents overlaps more than
     // 128 polygons it may return an invalid result".We just use FarPolySearchBound.
 
-    dtResult = m_navMeshQuery->findNearestPoly(point, FarPolySearchBound, &m_filter, &polyRef, closestPoint);
+    dtResult = m_navMeshQuery->findNearestPoly(point, FarPolySearchBound.data(), &m_filter, &polyRef, closestPoint);
     if (dtStatusSucceed(dtResult) && polyRef != INVALID_POLYREF)
     {
         float newDistance = dtVdist(closestPoint, point);
@@ -384,6 +393,32 @@ dtPolyRef PathFinder::getPolyByLocation(const float* point, float* distance)
     }
 
     return INVALID_POLYREF;
+}
+
+void PathFinder::AdjustGroundPathEndpoint(float* point, dtPolyRef poly)
+{
+    // A valid ground polygon does not mean the requested Z lies on its surface.
+    // Keep transport, airborne, hover and liquid paths in their own coordinates.
+    if (!m_sourceUnit || m_ignoreNormalization || m_sourceUnit->GetTransport() ||
+        m_sourceUnit->CanFly() || m_sourceUnit->IsInWater() || m_sourceUnit->HasHoverAura())
+        return;
+
+    const dtMeshTile* tile;
+    const dtPoly* polygon;
+    if (dtStatusFailed(m_navMesh->getTileAndPolyByRef(poly, &tile, &polygon)) ||
+        !(polygon->flags & NAV_GROUND))
+        return;
+
+    float surface[VERTEX_SIZE];
+    bool overPoly = false;
+    if (dtStatusFailed(m_navMeshQuery->closestPointOnPoly(poly, point, surface, &overPoly)) ||
+        !overPoly || std::abs(surface[1] - point[1]) > 7.0f)
+        return;
+
+    // Start the native collision query at the mesh surface, not below the floor.
+    float z = surface[1];
+    m_sourceUnit->UpdateAllowedPositionZ(point[2], point[0], z);
+    point[1] = z;
 }
 
 void PathFinder::BuildPolyPath(const Vector3& startPos, const Vector3& endPos)
@@ -504,6 +539,12 @@ void PathFinder::BuildPolyPath(const Vector3& startPos, const Vector3& endPos)
         m_type = PATHFIND_INCOMPLETE;
     }
 
+    AdjustGroundPathEndpoint(startPoint, startPoly);
+    AdjustGroundPathEndpoint(endPoint, endPoly);
+    setStartPosition(Vector3(startPoint[2], startPoint[0], startPoint[1]));
+    if (!farFromPoly)
+        setEndPosition(Vector3(endPoint[2], endPoint[0], endPoint[1]));
+
     // *** poly path generating logic ***
 
     // start and end are on same polygon
@@ -512,12 +553,20 @@ void PathFinder::BuildPolyPath(const Vector3& startPos, const Vector3& endPos)
     {
         DEBUG_FILTER_LOG(LOG_FILTER_PATHFINDING, "++ BuildPolyPath :: (startPoly == endPoly)\n");
 
-        BuildShortcut(); // todo move in straight line is different than build shortcut!
-
         m_pathPolyRefs[0] = startPoly;
         m_polyLength = 1;
 
+        // Even one polygon can have a sloping detail surface. Use Detour's
+        // native point path instead of joining unprojected endpoint heights.
         m_type = farFromPoly ? PATHFIND_INCOMPLETE : PATHFIND_NORMAL;
+        if (m_sourceUnit && !m_ignoreNormalization && !m_sourceUnit->GetTransport() &&
+            !m_sourceUnit->CanFly() && !m_sourceUnit->IsInWater() && !m_sourceUnit->HasHoverAura())
+            BuildPointPath(startPoint, endPoint);
+        else
+        {
+            BuildShortcut();
+            m_type = farFromPoly ? PATHFIND_INCOMPLETE : PATHFIND_NORMAL;
+        }
         DEBUG_FILTER_LOG(LOG_FILTER_PATHFINDING, "++ BuildPolyPath :: path type %d\n", m_type);
         return;
     }
@@ -897,15 +946,21 @@ void PathFinder::BuildPointPath(const float* startPoint, const float* endPoint)
             Vector3 emptyVec = { 0.0f, 0.0f, 0.0f };
 
             uint8 cutLimit = 0;
+            uint32 lastKeptPoint = 0;
             for (uint32 i = 1; i < pointCount - 1; ++i)
             {
                 G3D::Vector3 p = tempPathPoints[i];     // Point
-                G3D::Vector3 p1 = tempPathPoints[i - 1]; // PrevPoint
+                G3D::Vector3 p1 = tempPathPoints[lastKeptPoint]; // Last retained point
                 G3D::Vector3 p2 = tempPathPoints[i + 1]; // NextPoint
 
-                float lineLen = (p1.y - p2.y) * p.x + (p2.x - p1.x) * p.y + (p1.x * p2.y - p2.x * p1.y);
-
-                if (fabs(lineLen) < LINE_FAULT && cutLimit < SKIP_POINT_LIMIT)
+                bool safeToSkip = cutLimit < SKIP_POINT_LIMIT;
+                for (uint32 check = lastKeptPoint + 1; safeToSkip && check <= i; ++check)
+                {
+                    uint32 offset = check * VERTEX_SIZE;
+                    Vector3 original(pathPoints[offset + 2], pathPoints[offset], pathPoints[offset + 1]);
+                    safeToSkip = CanSkipPathPoint(p1, original, p2);
+                }
+                if (safeToSkip)
                 {
                     tempPathPoints[i] = emptyVec;
                     cutLimit++;
@@ -913,6 +968,7 @@ void PathFinder::BuildPointPath(const float* startPoint, const float* endPoint)
                 else
                 {
                     tempPointCounter++;
+                    lastKeptPoint = i;
                     cutLimit = 0;
                 }
             }
@@ -985,6 +1041,20 @@ void PathFinder::BuildPointPath(const float* startPoint, const float* endPoint)
     NormalizePath();
 
     DEBUG_FILTER_LOG(LOG_FILTER_PATHFINDING, "++ PathFinder::BuildPointPath path type %d size %d poly-size %d\n", m_type, pointCount, m_polyLength);
+}
+
+bool PathFinder::CanSkipPathPoint(const Vector3& previous, const Vector3& point, const Vector3& next) const
+{
+    Vector3 line = next - previous;
+    float lengthSquared = line.squaredMagnitude();
+    if (lengthSquared <= 0.0f)
+        return false;
+    float along = (point - previous).dot(line) / lengthSquared;
+    if (along < 0.0f || along > 1.0f)
+        return false;
+    // Horizontal alignment alone is insufficient on slopes and stairs.
+    Vector3 closest = previous + line * along;
+    return (point - closest).squaredMagnitude() < LINE_FAULT * LINE_FAULT;
 }
 
 void PathFinder::NormalizePath()

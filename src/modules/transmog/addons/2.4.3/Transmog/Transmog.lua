@@ -62,6 +62,7 @@ Transmog.currentTransmogSlot = nil
 Transmog.currentTransmogItemClass = nil
 Transmog.page = -1
 Transmog.currentPage = 1
+Transmog.searchText = ""
 Transmog.totalPages = 1
 Transmog.ipp = 15
 Transmog.numTransmogs = {}
@@ -556,9 +557,15 @@ function Transmog:CacheSetItems()
     end
 end
 
+function Transmog_UpdateTitle()
+    local version = GetAddOnMetadata("Transmog", "Version") or "unknown"
+    TransmogFrameTitleText:SetText("Transmogrify - v" .. version)
+end
+
 function Transmog_OnLoad()
 
 	twfdebug("Transmog_OnLoad start")
+    Transmog_UpdateTitle()
 
     local bmLoaded, bmReason = LoadAddOn("Blizzard_BattlefieldMinimap")
 
@@ -568,7 +575,7 @@ function Transmog_OnLoad()
     end
 
 
-    TransmogFrameInstructions:SetText("Are you tired of wearing the same armor every day?\nSelect the item you wish to change and enjoy your new stylish look.")
+    TransmogFrameInstructions:SetText("Select an equipment slot on the left.\nSearch its collected appearances by item name or exact item ID.")
     TransmogFrameNoTransmogs:SetText("You have yet to uncover any kind of appearance for this item. \nThe appearance will unlock after you equip the item.")
 
     --if not TRANSMOG_CONFIG then
@@ -771,8 +778,8 @@ Transmog.availableTransmogsCacheDelay:SetScript("OnUpdate", function()
     if gt >= st then
 
         twfdebug("delay cache: " .. Transmog.availableTransmogsCacheDelay.InventorySlotId)
-        Transmog:prepareAvailableTransmogs(Transmog.availableTransmogsCacheDelay.InventorySlotId, Transmog.availableTransmogsCacheDelay.ItemClass)
         Transmog.availableTransmogsCacheDelay:Hide()
+        Transmog:prepareAvailableTransmogs(Transmog.availableTransmogsCacheDelay.InventorySlotId, Transmog.availableTransmogsCacheDelay.ItemClass)
     end
 end)
 
@@ -828,22 +835,71 @@ function Transmog:prepareAvailableTransmogs(slot, itemClass)
     end
 
 	twfdebug("prepareAvailableTransmogs end")
+    -- Names may arrive after the search box was edited.
+    if self.tab == 'items' and self.currentTransmogSlot == slot
+        and self.currentTransmogItemClass == itemClass and TransmogFrame:IsVisible() then
+        self:renderAvailableTransmogs(slot, itemClass)
+    end
+end
+
+-- Literal, case-insensitive name search; all-digit queries match an exact item ID.
+function Transmog:getSearchResults(slot, itemClass)
+    local items = self.availableTransmogItems[slot]
+    items = items and items[itemClass] or {}
+    local query = self.searchText or ""
+    local itemID = nil
+    if string.find(query, "^%d+$") then itemID = tonumber(query) end
+    local results = {}
+    for _, item in ipairs(items) do
+        if query == "" or (itemID and item.id == itemID)
+            or (not itemID and string.find(string.lower(item.name or ""), query, 1, true)) then
+            table.insert(results, item)
+        end
+    end
+    return results
+end
+
+function Transmog_SearchChanged(text)
+    local query = string.lower(text or "")
+    query = string.gsub(query, "^%s+", "")
+    query = string.gsub(query, "%s+$", "")
+    if query == Transmog.searchText then return end
+    Transmog.searchText = query
+    Transmog.currentPage = 1
+    if Transmog.tab == 'items' and Transmog.currentTransmogSlot
+        and Transmog.currentTransmogItemClass then
+        Transmog:renderAvailableTransmogs(Transmog.currentTransmogSlot, Transmog.currentTransmogItemClass)
+    end
 end
 
 function Transmog:renderAvailableTransmogs(slot, itemClass)
 
 	twfdebug("renderAvailableTransmogs slot: " .. slot .. " itemClass: " .. itemClass)
 
-	if not self.transmogDataFromServer[slot] then
-		return
-	end
-
-    -- hide all item buttons
     self:hideItems(true)
     self:hideItemBorders()
+    TransmogFrameNoTransmogs:Hide()
+    TransmogFrameSearch:Show()
 
-	self:setProgressBar(self:tableSize(self.transmogDataFromServer[slot][itemClass]), self.numTransmogs[slot][itemClass])
-    if self:tableSize(self.transmogDataFromServer[slot][itemClass]) == 0 then
+    local collected = self.transmogDataFromServer[slot]
+    collected = collected and collected[itemClass] or {}
+    local total = self:tableSize(collected)
+    local results = self:getSearchResults(slot, itemClass)
+    local matches = table.getn(results)
+    self.totalPages = math.max(1, self:ceil(matches / self.ipp))
+    self.currentPage = math.max(1, math.min(self.currentPage, self.totalPages))
+    self:setProgressBar(total, total)
+    if self.searchText ~= "" then
+        TransmogFrameCollectedCollectedStatus:SetText("Collected: " .. total .. " | Matches: " .. matches)
+    end
+    if matches == 0 then
+        if total == 0 then
+            TransmogFrameNoTransmogs:SetText("You have yet to uncover any kind of appearance for this item. \nThe appearance will unlock after you equip the item.")
+        elseif self.searchText ~= "" then
+            TransmogFrameNoTransmogs:SetText("No matching appearances for this slot.\nTry another name or item ID, or click Clear.")
+        else
+            TransmogFrameNoTransmogs:SetText("Loading collected appearances...")
+        end
         TransmogFrameNoTransmogs:Show()
     end
 
@@ -852,7 +908,7 @@ function Transmog:renderAvailableTransmogs(slot, itemClass)
     local col = 0
     local itemIndex = 1
 
-    for _, item in ipairs(self.availableTransmogItems[slot][itemClass]) do
+    for _, item in ipairs(results) do
 
         if index >= (self.currentPage - 1) * self.ipp and index < self.currentPage * self.ipp then
 
@@ -860,7 +916,7 @@ function Transmog:renderAvailableTransmogs(slot, itemClass)
                 self.ItemButtons[itemIndex] = CreateFrame('Frame', 'TransmogLook' .. itemIndex, TransmogFrame, 'TransmogFrameLookTemplate')
             end
 
-            self.ItemButtons[itemIndex]:SetPoint("TOPLEFT", TransmogFrame, "TOPLEFT", 263 + col * 90, -105 - 120 * row)
+            self.ItemButtons[itemIndex]:SetPoint("TOPLEFT", TransmogFrame, "TOPLEFT", 263 + col * 90, -113 - 120 * row)
 
             self.ItemButtons[itemIndex].name = item.name
             self.ItemButtons[itemIndex].id = item.id
@@ -1112,8 +1168,6 @@ function Transmog:renderAvailableTransmogs(slot, itemClass)
         index = index + 1
     end
 
-    self.totalPages = self:ceil(self:tableSize(self.availableTransmogItems[slot][itemClass]) / self.ipp)
-
     TransmogFramePageText:SetText("Page " .. self.currentPage .. "/" .. self.totalPages)
 
     if self.currentPage == 1 then
@@ -1122,7 +1176,7 @@ function Transmog:renderAvailableTransmogs(slot, itemClass)
         TransmogFrameLeftArrow:Enable()
     end
 
-    if self.currentPage == self.totalPages or self:tableSize(self.availableTransmogItems[slot][itemClass]) < self.ipp then
+    if self.currentPage >= self.totalPages then
         TransmogFrameRightArrow:Disable()
     else
         TransmogFrameRightArrow:Enable()
@@ -1236,14 +1290,14 @@ function Apply_OnClick()
 
     TransmogFrameApplyButton:Disable()
 
-	local slots = ""
+	local slots = {}
     for InventorySlotId, itemID in pairs(Transmog.transmogStatusToServer) do
         if Transmog.transmogStatusFromServer[InventorySlotId] ~= itemID then
-			slots = slots .. InventorySlotId-1 .. ":" .. Transmog.transmogStatusToServer[InventorySlotId] .. ","
+			table.insert(slots, (InventorySlotId-1) .. ":" .. itemID)
         end
     end
 
-	Transmog:aSend("ApplyTransmog "..string.gsub(slots, ",$", ""))
+	Transmog:aSend("ApplyTransmog "..table.concat(slots, ","))
 end
 
 function Transmog:ApplyTransmogResult(success, data)
@@ -1538,7 +1592,7 @@ function Transmog:calculateCost(to)
 
 	twfdebug("Transmog:calculateCost")
 
-	local slots = ""
+	local slots = {}
     local transmogs = 0
     local resets = 0
 
@@ -1546,7 +1600,7 @@ function Transmog:calculateCost(to)
         if data ~= self.transmogStatusToServer[InventorySlotId] then
             if self.transmogStatusToServer[InventorySlotId] ~= 0 then
                 transmogs = transmogs + 1
-				slots = slots .. InventorySlotId-1 .. ":" .. self.transmogStatusToServer[InventorySlotId] .. ","
+				table.insert(slots, (InventorySlotId-1) .. ":" .. self.transmogStatusToServer[InventorySlotId])
             else
                 resets = resets + 1
             end
@@ -1570,7 +1624,7 @@ function Transmog:calculateCost(to)
 		TransmogFrameCurrencyText:Hide()
 		TransmogFrameCurrencyIcon:Hide()
     else
-		self:aSend("CalculateTransmogCost "..string.gsub(slots, ",$", ""))
+		self:aSend("CalculateTransmogCost "..table.concat(slots, ","))
 		TransmogFrameApplyButton:Disable()
     end
 end
@@ -1782,6 +1836,12 @@ function selectTransmogSlot(InventorySlotId, slotName)
     TransmogFrameNoTransmogs:Hide()
 
     if InventorySlotId == -1 then
+        if Transmog.tab == 'items' then
+            TransmogFrameSearch:Show()
+        else
+            TransmogFrameSearch:Hide()
+        end
+        TransmogFrameSearchInput:ClearFocus()
         Transmog:hidePlayerItemsBorders()
         Transmog:HidePlayerItemsAnimation()
         Transmog:hideItems(true)

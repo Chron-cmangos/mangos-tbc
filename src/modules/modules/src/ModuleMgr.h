@@ -63,6 +63,7 @@ namespace cmangos_module
         // Player Item Hooks
         bool OnUseItem(Player* player, Item* item);
         void OnSetVisibleItemSlot(Player* player, uint8 slot, Item* item);
+        void OnInspectEquipment(Player* inspector, Player* subject);
         void OnMoveItemFromInventory(Player* player, Item* item);
         void OnMoveItemToInventory(Player* player, Item* item);
         void OnStoreItem(Player* player, Loot* loot, Item* item);

@@ -72,6 +72,8 @@ uint32 realmID;                                             ///< Id of the realm
 /// Launch the mangos server
 int main(int argc, char* argv[])
 {
+    MaNGOS::InstallFatalHandlers();
+
     std::string auctionBotConfig, configFile, playerBotConfig, aiPlayerBotConfig, serviceParameter;
 
     boost::program_options::options_description desc("Allowed options");

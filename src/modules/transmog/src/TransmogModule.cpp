@@ -7,6 +7,8 @@
 
 #include "Entities/GossipDef.h"
 #include "Entities/Player.h"
+#include "Entities/Item.h"
+#include "Server/DBCStores.h"
 #include "Globals/ObjectMgr.h"
 
 #ifdef ENABLE_PLAYERBOTS
@@ -48,6 +50,58 @@ namespace cmangos_module
     void SendAddOnMessage(const Player* player, const char* prefix, const std::string& message)
     {
         SendAddOnMessage(player, prefix, message.c_str());
+    }
+
+
+    // Cosmetic visible IDs cannot identify real equipment in old clients.
+    // Publish a bounded, read-only snapshot; native item prototypes and bonuses
+    // remain authoritative and unchanged.
+    void TransmogModule::SendEquipmentStatus(const Player* recipient, Player* subject, const char* scope)
+    {
+        if (!recipient || !subject || !recipient->GetSession() ||
+            recipient->GetSession()->GetRemoteAddress() == "disconnected/bot")
+            return;
+        if (!++equipmentSerial) ++equipmentSerial;
+        uint32 serial = equipmentSerial;
+        auto send = [&](const std::string& line) { SendAddOnMessage(recipient, "mantechequip", line); };
+        auto clean = [](const char* value) {
+            std::string result(value ? value : "");
+            for (char& c : result) if (c == ':' || uint8(c) < 32) c = ' ';
+            if (result.size() > 100) result.resize(100);
+            return result;
+        };
+        send(helper::FormatString("GearBegin:1:%u:%s:%u:%s", serial, scope, subject->GetGUIDLow(), subject->GetName()));
+        std::map<uint32, uint32> sets;
+        for (uint8 slot = EQUIPMENT_SLOT_START; slot < EQUIPMENT_SLOT_END; ++slot)
+        {
+            const Item* item = subject->GetItemByPos(INVENTORY_SLOT_BAG_0, slot);
+            uint32 entry = item ? item->GetEntry() : 0;
+            uint32 setId = item ? item->GetProto()->ItemSet : 0;
+            send(helper::FormatString("GearSlot:%u:%u:%u:%u:%u", serial, uint32(slot) + 1, entry, item ? GetTransmogAppearance(item) : 0, setId));
+            if (setId) ++sets[setId];
+        }
+        for (const auto& pair : sets)
+        {
+            const ItemSetEntry* set = sItemSetStore.LookupEntry(pair.first);
+            if (!set) continue;
+            ItemSetEffect* effect = subject->GetItemSetEffect(pair.first);
+            uint32 total = 0;
+            for (uint32 id : set->itemId) if (id) ++total;
+            send(helper::FormatString("GearSet:%u:%u:%u:%u:%u:%s", serial, pair.first, pair.second, effect ? effect->item_count : 0, total, clean(set->name[0]).c_str()));
+            for (uint32 id : set->itemId)
+                if (const ItemPrototype* proto = id ? sObjectMgr.GetItemPrototype(id) : nullptr)
+                    send(helper::FormatString("GearMember:%u:%u:%u:%s", serial, pair.first, id, clean(proto->Name1).c_str()));
+            for (uint8 i = 0; i < 8; ++i)
+                if (set->spells[i] && set->items_to_triggerspell[i])
+                    send(helper::FormatString("GearBonus:%u:%u:%u", serial, pair.first, set->items_to_triggerspell[i]));
+        }
+        send(helper::FormatString("GearEnd:%u", serial));
+    }
+
+    void TransmogModule::OnInspectEquipment(Player* inspector, Player* subject)
+    {
+        std::lock_guard<std::recursive_mutex> lock(stateMutex);
+        if (GetConfig()->enabled) SendEquipmentStatus(inspector, subject, "inspect");
     }
 
     TransmogModule::TransmogModule()
@@ -273,6 +327,7 @@ namespace cmangos_module
             if (player)
             {
                 SendActiveTransmogs(player);
+                SendEquipmentStatus(player, player, "self");
                 return true;
             }
         }

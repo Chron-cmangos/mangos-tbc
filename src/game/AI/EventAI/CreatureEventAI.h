@@ -895,6 +895,7 @@ class CreatureEventAI : public CreatureAI
             m_CreatureEventAIList.clear();
         }
         void InitAI();
+        void SpellListChanged() override;
 
         void GetAIInformation(ChatHandler& reader) override;
 

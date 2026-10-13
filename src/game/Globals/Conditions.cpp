@@ -64,7 +64,7 @@ uint8 const ConditionTargetsInternal[] =
     CONDITION_REQ_TARGET_PLAYER,      //  3
     CONDITION_REQ_ANY_WORLDOBJECT,    //  4
     CONDITION_REQ_TARGET_PLAYER_OR_CORPSE, //  5
-    CONDITION_REQ_TARGET_PLAYER,      //  6
+    CONDITION_REQ_TARGET_PLAYER_OR_CORPSE, //  6: Evaluate supports corpse-team loot
     CONDITION_REQ_TARGET_PLAYER,      //  7
     CONDITION_REQ_TARGET_PLAYER,      //  8
     CONDITION_REQ_TARGET_PLAYER,      //  9

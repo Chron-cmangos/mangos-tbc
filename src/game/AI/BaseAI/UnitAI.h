@@ -552,7 +552,7 @@ class UnitAI : public CombatActions
 
         // Spell Lists
         // called when owner spell list changes - need to recalculate main spell and a few other things
-        void SpellListChanged();
+        virtual void SpellListChanged();
         void UpdateSpellLists();
         std::pair<bool, Unit*> ChooseTarget(CreatureSpellListTargeting* targetData, uint32 spellId) const;
         virtual CreatureSpellList const& GetSpellList() const = 0;

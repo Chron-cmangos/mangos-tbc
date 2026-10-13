@@ -60,8 +60,7 @@ HANDLE WheatyExceptionReport::m_hDumpFile;
 HANDLE WheatyExceptionReport::m_hProcess;
 SymbolPairs WheatyExceptionReport::symbols;
 std::stack<SymbolDetail> WheatyExceptionReport::symbolDetails;
-bool WheatyExceptionReport::alreadyCrashed;
-std::mutex WheatyExceptionReport::alreadyCrashedLock;
+std::atomic<bool> WheatyExceptionReport::alreadyCrashed;
 WheatyExceptionReport::pRtlGetVersion WheatyExceptionReport::RtlGetVersion;
 
 // Declare global instance of class
@@ -72,6 +71,7 @@ WheatyExceptionReport g_WheatyExceptionReport;
 
 WheatyExceptionReport::WheatyExceptionReport()             // Constructor
 {
+    MaNGOS::SetFatalReporter(ReportFatalError);
     // Install the unhandled exception filter function
     m_previousFilter = SetUnhandledExceptionFilter(WheatyUnhandledExceptionFilter);
     m_previousCrtHandler = _set_invalid_parameter_handler(WheatyCrtHandler);
@@ -105,12 +105,10 @@ WheatyExceptionReport::~WheatyExceptionReport()
 LONG WINAPI WheatyExceptionReport::WheatyUnhandledExceptionFilter(
 PEXCEPTION_POINTERS pExceptionInfo)
 {
-    std::unique_lock<std::mutex> guard(alreadyCrashedLock);
-    // Handle only 1 exception in the whole process lifetime
-    if (alreadyCrashed)
+    // Reporting/previous CRT filters can re-enter on the same thread. Do not
+    // lock recursively or replace the original failure with a mutex exception.
+    if (alreadyCrashed.exchange(true, std::memory_order_relaxed))
         return EXCEPTION_EXECUTE_HANDLER;
-
-    alreadyCrashed = true;
 
     TCHAR module_folder_name[MAX_PATH];
     GetModuleFileName(nullptr, module_folder_name, MAX_PATH);
@@ -133,11 +131,11 @@ PEXCEPTION_POINTERS pExceptionInfo)
     sprintf(shortHash, _T("%.8s"), REVISION_ID);
     SYSTEMTIME systime;
     GetLocalTime(&systime);
-    sprintf(m_szDumpFileName, "%s\\%s_%s_[%u-%u_%u-%u-%u].dmp",
-        crash_folder_path, shortHash, pos, systime.wDay, systime.wMonth, systime.wHour, systime.wMinute, systime.wSecond);
+    sprintf(m_szDumpFileName, "%s\\%s_%s_[%u-%u_%u-%u-%u]_%lu.dmp",
+        crash_folder_path, shortHash, pos, systime.wDay, systime.wMonth, systime.wHour, systime.wMinute, systime.wSecond, GetCurrentProcessId());
 
-    _stprintf(m_szLogFileName, _T("%s\\%s_%s_[%u-%u_%u-%u-%u].txt"),
-        crash_folder_path, shortHash, pos, systime.wDay, systime.wMonth, systime.wHour, systime.wMinute, systime.wSecond);
+    _stprintf(m_szLogFileName, _T("%s\\%s_%s_[%u-%u_%u-%u-%u]_%lu.txt"),
+        crash_folder_path, shortHash, pos, systime.wDay, systime.wMonth, systime.wHour, systime.wMinute, systime.wSecond, GetCurrentProcessId());
 
     m_hDumpFile = CreateFile(m_szDumpFileName,
         GENERIC_WRITE,
@@ -147,7 +145,7 @@ PEXCEPTION_POINTERS pExceptionInfo)
         FILE_FLAG_WRITE_THROUGH,
         nullptr);
 
-    if (m_hDumpFile)
+    if (m_hDumpFile != INVALID_HANDLE_VALUE)
     {
         MINIDUMP_EXCEPTION_INFORMATION info;
         info.ClientPointers = FALSE;
@@ -187,6 +185,21 @@ PEXCEPTION_POINTERS pExceptionInfo)
         return m_previousFilter(pExceptionInfo);
     else
         return EXCEPTION_EXECUTE_HANDLER/*EXCEPTION_CONTINUE_SEARCH*/;
+}
+
+void WheatyExceptionReport::ReportFatalError(char const* reason, void* caller)
+{
+    CONTEXT context = {};
+    RtlCaptureContext(&context);
+    EXCEPTION_RECORD record = {};
+    record.ExceptionCode = 0xC0000420L;
+    record.ExceptionFlags = EXCEPTION_NONCONTINUABLE;
+    record.ExceptionAddress = caller;
+    record.NumberParameters = 2;
+    record.ExceptionInformation[0] = reinterpret_cast<ULONG_PTR>(reason);
+    record.ExceptionInformation[1] = reinterpret_cast<ULONG_PTR>(caller);
+    EXCEPTION_POINTERS pointers{&record, &context};
+    WheatyUnhandledExceptionFilter(&pointers);
 }
 
 void __cdecl WheatyExceptionReport::WheatyCrtHandler(wchar_t const* /*expression*/, wchar_t const* /*function*/, wchar_t const* /*file*/, unsigned int /*line*/, uintptr_t /*pReserved*/)

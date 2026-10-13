@@ -678,7 +678,7 @@ struct ItemSetEntry
     // uint32    id                                         // 0        m_ID
     char*     name[16];                                     // 1-16     m_name_lang
     // 17 string flags
-    // uint32    itemId[17];                                // 18-34    m_itemID
+    uint32    itemId[17];                                // 18-34    m_itemID
     uint32    spells[8];                                    // 35-42    m_setSpellID
     uint32    items_to_triggerspell[8];                     // 43-50    m_setThreshold
     uint32    required_skill_id;                            // 51       m_requiredSkill

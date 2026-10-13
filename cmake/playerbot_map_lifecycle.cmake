@@ -14,7 +14,7 @@ endfunction()
 file(READ "${playerbots_SOURCE_DIR}/playerbot/strategy/Engine.cpp" _lifecycle_text)
 string(REPLACE "\r\n" "\n" _lifecycle_text "${_lifecycle_text}")
 string(SHA256 _lifecycle_hash "${_lifecycle_text}")
-if(NOT _lifecycle_hash STREQUAL "785c1261b10e262a92006ca9d720c02ee082a9c328f31db120cfca0b7dcf06ec")
+if(NOT _lifecycle_hash STREQUAL "973630bf34bcb0dbc887748c2c1cbdeceadead1fd9caa24b14d77006e1d1a526")
   message(FATAL_ERROR "Review map-lifecycle fix: upstream Engine.cpp changed")
 endif()
 mantech_lifecycle_replace(_lifecycle_text [==[bool Engine::DoNextAction(Unit* unit, int depth, bool minimal, bool isStunned)
@@ -34,9 +34,7 @@ mantech_lifecycle_replace(_lifecycle_text [==[void Engine::ClearFailures(Action*
     }
     if (actionFailures.empty())
         return;]==])
-mantech_lifecycle_replace(_lifecycle_text [==[                        pmo4.reset();
-
-#ifdef PLAYERBOT_ELUNA]==] [==[                        pmo4.reset();
+mantech_lifecycle_replace(_lifecycle_text [==[                        pmo4.reset();]==] [==[                        pmo4.reset();
 
                         // A successful movement action can start a teleport and
                         // detach the bot. End this tick before failure-target
@@ -51,9 +49,7 @@ mantech_lifecycle_replace(_lifecycle_text [==[                        pmo4.reset
                             }
                             delete actionNode;
                             break;
-                        }
-
-#ifdef PLAYERBOT_ELUNA]==])
+                        }]==])
 file(WRITE "${_lifecycle_dir}/Engine.cpp.in" "${_lifecycle_text}")
 configure_file("${_lifecycle_dir}/Engine.cpp.in" "${_lifecycle_dir}/Engine.cpp" COPYONLY)
 get_target_property(_lifecycle_sources playerbots SOURCES)
@@ -71,7 +67,7 @@ set_source_files_properties("${_lifecycle_dir}/Engine.cpp" TARGET_DIRECTORY play
 file(READ "${playerbots_SOURCE_DIR}/playerbot/PlayerbotAI.cpp" _lifecycle_text)
 string(REPLACE "\r\n" "\n" _lifecycle_text "${_lifecycle_text}")
 string(SHA256 _lifecycle_hash "${_lifecycle_text}")
-if(NOT _lifecycle_hash STREQUAL "59d32cf4fc0c6039f8936bde5378d43bd84d8674a4a40b39090f4d1708b45f2a")
+if(NOT _lifecycle_hash STREQUAL "d5e05e7d85398d6baef5bb268d82ea9061d1e48ae1609fd587c99994b7aafcdf")
   message(FATAL_ERROR "Review map-lifecycle fix: upstream PlayerbotAI.cpp changed")
 endif()
 mantech_lifecycle_replace(_lifecycle_text [==[Unit* PlayerbotAI::GetUnit(ObjectGuid guid)

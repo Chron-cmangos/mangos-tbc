@@ -1,0 +1,26 @@
+ManTech Transmog - TBC client package
+Package revision: 1.0.0-ManTech.4 (2026-09-21)
+
+Packaged from the operator-supplied ManTech-Transmog output, based on
+flekz-games/cmangos-transmog revision 0abf98b38e80724b5a2847b029ccf72e09d98ef2.
+Original source: https://github.com/flekz-games/cmangos-transmog
+Supplied GPLv3 license is included as LICENSE; Lua/XML source is included.
+
+Packaging changes: descriptive TOC title/notes, version metadata,
+this notice and supplied license.
+Revision 2: price-check and Apply requests join slot/item pairs without
+a trailing comma, avoiding rejection by the server's request parser.
+Revision 3: selected-slot appearance search by name or exact item ID,
+with Clear, filtered pagination and no-match feedback.
+Revision 4: loaded addon version in the title bar; search stays visible
+on the opening Items screen, with instructions to select a slot first.
+
+Install through the launcher or extract Transmog into Interface/AddOns.
+The resulting path must be Interface/AddOns/Transmog/Transmog.toc.
+Fully close/reopen the client after first installation and enable the addon.
+
+Requires the server transmog module to be installed and enabled. Talk to
+Magister Stellaria in Stormwind's Mage Tower or Orgrimmar's Valley of Spirits.
+This addon does not install server SQL, configure the realm or restart it.
+
+Client-specific Lua syntax and packaging checked; no live gameplay test.

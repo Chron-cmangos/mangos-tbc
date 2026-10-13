@@ -500,6 +500,11 @@ namespace cmangos_module
         }
     }
 
+    void ModuleMgr::OnInspectEquipment(Player* inspector, Player* subject)
+    {
+        for (Module* mod : modules) mod->OnInspectEquipment(inspector, subject);
+    }
+
     void ModuleMgr::OnMoveItemFromInventory(Player* player, Item* item)
     {
         for (Module* mod : modules)

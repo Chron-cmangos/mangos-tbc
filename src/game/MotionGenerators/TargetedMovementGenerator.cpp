@@ -1245,9 +1245,19 @@ float FormationMovementGenerator::BuildPath(Unit& owner, PointsArray& path)
         float lenght = (masterPos - nextPos).magnitude();
         if (lenght > 0.1f)
         {
-            path.emplace_back(ownerPos);
-            path.push_back(nextPos);
-            speed = owner.GetSpeed(MOVE_WALK);
+            if (m_slot->GetFormationData()->CanUseMMap())
+            {
+                if (i_path->calculate(ownerPos, nextPos) &&
+                    !(i_path->getPathType() & (PATHFIND_NOPATH | PATHFIND_SHORTCUT)))
+                    path = i_path->getPath();
+            }
+            else
+            {
+                path.emplace_back(ownerPos);
+                path.push_back(nextPos);
+            }
+            if (path.size() > 1)
+                speed = owner.GetSpeed(MOVE_WALK);
         }
     }
     else
@@ -1300,10 +1310,18 @@ float FormationMovementGenerator::BuildPath(Unit& owner, PointsArray& path)
             if (m_slot->GetFormationData()->CanUseMMap())
             {
                 // point is found but an obstacle can exist between this point and previous one
-                i_path->calculate(path.back(), nextPos, true, false);
+                if (!i_path->calculate(path.back(), nextPos) ||
+                    (i_path->getPathType() & (PATHFIND_NOPATH | PATHFIND_SHORTCUT)))
+                    break;
             }
             else
+            {
+                // Each segment starts at the previous endpoint, not an old
+                // accumulated path from an earlier formation update.
+                i_path->getPath().clear();
+                i_path->getPath().push_back(path.back());
                 i_path->getPath().push_back(nextPos);
+            }
 
 
             for (auto posItr = i_path->getPath().begin() + 1; posItr != i_path->getPath().end(); ++posItr)

@@ -12,6 +12,7 @@
 #include <cstdio>
 #include <stack>
 #include <mutex>
+#include <atomic>
 
 #define WER_MAX_ARRAY_ELEMENTS_COUNT 10
 #define WER_MAX_NESTING_LEVEL 4
@@ -144,6 +145,7 @@ class WheatyExceptionReport
             PEXCEPTION_POINTERS pExceptionInfo);
 
         static void __cdecl WheatyCrtHandler(wchar_t const* expression, wchar_t const* function, wchar_t const* file, unsigned int line, uintptr_t pReserved);
+        static void ReportFatalError(char const* reason, void* caller);
 
         static void printTracesForAllThreads(bool);
     private:
@@ -186,8 +188,7 @@ class WheatyExceptionReport
         static HANDLE m_hProcess;
         static SymbolPairs symbols;
         static std::stack<SymbolDetail> symbolDetails;
-        static bool alreadyCrashed;
-        static std::mutex alreadyCrashedLock;
+        static std::atomic<bool> alreadyCrashed;
         typedef NTSTATUS(NTAPI* pRtlGetVersion)(PRTL_OSVERSIONINFOW lpVersionInformation);
         static pRtlGetVersion RtlGetVersion;
 

@@ -32,6 +32,9 @@
 #include "Guilds/GuildMgr.h"
 #include "Globals/ObjectMgr.h"
 #include "Server/WorldSession.h"
+#ifdef ENABLE_MODULES
+#include "ModuleMgr.h"
+#endif
 #include "Entities/UpdateData.h"
 #include "Chat/Chat.h"
 #include "AI/ScriptDevAI/ScriptDevAIMgr.h"
@@ -977,6 +980,10 @@ void WorldSession::HandleInspectOpcode(WorldPacket& recv_data)
 
     if (_player->CanAttack(plr))
         return;
+
+#ifdef ENABLE_MODULES
+    sModuleMgr.OnInspectEquipment(_player, plr);
+#endif
 
     uint32 talent_points = 0x3D;
     uint32 guid_size = plr->GetPackGUID().size();

@@ -337,14 +337,14 @@ Unit::Unit() :
     m_regenTimer(0),
     m_combatData(new CombatData(this)),
     m_combatManager(this),
+    m_hasPeriodicAura(false),
     m_guardianPetsIterator(m_guardianPets.end()),
     m_spellUpdateHappening(false),
     m_spellProcsHappening(false),
     m_hasHeartbeatProcCounter(0),
     m_ignoreRangedTargets(false),
     m_auraUpdateMask(0),
-    m_isMountOverriden(false), m_overridenMountId(0),
-    m_hasPeriodicAura(false)
+    m_isMountOverriden(false), m_overridenMountId(0)
 {
     ManTech::MemoryLedger::Add(ManTech::MemoryKind::Units, sizeof(Unit));
     m_objectType |= TYPEMASK_UNIT;
@@ -5472,7 +5472,8 @@ void Unit::RemoveAurasDueToSpellBySteal(SpellAuraHolder* holder, Unit* stealer)
     // max duration 2 minutes (in msecs)
     int32 dur = holder->GetAuraDuration();
     int32 max_dur = 2 * MINUTE * IN_MILLISECONDS;
-    int32 new_max_dur = max_dur > dur ? dur : max_dur;
+    // permanent auras (duration -1) must also be capped
+    int32 new_max_dur = (dur >= 0 && dur < max_dur) ? dur : max_dur;
     new_holder->SetAuraMaxDuration(new_max_dur);
     new_holder->SetAuraDuration(new_max_dur);
 
@@ -5782,7 +5783,7 @@ void Unit::RemoveSpellAuraHolder(SpellAuraHolder* holder, AuraRemoveMode mode)
     holder->_RemoveSpellAuraHolder();
 
     if (mode != AURA_REMOVE_BY_DELETE)
-        holder->HandleSpellSpecificBoosts(false);
+        holder->HandleSpellSpecificBoosts(false, mode);
 
     if (statue)
         statue->UnSummon();

@@ -76,7 +76,7 @@ const char ItemClassfmt[] = "nxxssssssssssssssssx";
 const char ItemExtendedCostEntryfmt[] = "niiiiiiiiiiiii";
 const char ItemRandomPropertiesfmt[] = "nxiiixxssssssssssssssssx";
 const char ItemRandomSuffixfmt[] = "nssssssssssssssssxxiiiiii";
-const char ItemSetEntryfmt[] = "dssssssssssssssssxxxxxxxxxxxxxxxxxxiiiiiiiiiiiiiiiiii";
+const char ItemSetEntryfmt[] = "dssssssssssssssssxiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiii";
 #ifdef ENABLE_PLAYERBOTS
 const char LFGDungeonEntryfmt[] = "nssssssssssssssssxiiiixx";
 #endif

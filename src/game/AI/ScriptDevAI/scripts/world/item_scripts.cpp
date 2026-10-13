@@ -630,6 +630,9 @@ namespace
             mailbox->SetRespawnTime(300);
             mailbox->SetSpellId(spell->m_spellInfo->Id);
             mailbox->SetSpawnerGuid(player->GetObjectGuid());
+            // Preserve the world template; this portable instance belongs to
+            // the summoner's faction, including Horde clients.
+            mailbox->SetUInt32Value(GAMEOBJECT_FACTION, player->GetFaction());
             map->Add(mailbox);
             mailbox->AIM_Initialize();
         }

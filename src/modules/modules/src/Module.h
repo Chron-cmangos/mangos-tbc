@@ -103,6 +103,7 @@ namespace cmangos_module
         virtual bool OnUseItem(Player* player, Item* item) { return false; }
         // Called when updating the player equipment visibility
         virtual void OnSetVisibleItemSlot(Player* player, uint8 slot, Item* item) {}
+        virtual void OnInspectEquipment(Player* inspector, Player* subject) {}
         // Called when a player moves an item from the inventory
         virtual void OnMoveItemFromInventory(Player* player, Item* item) {}
         // Called when a player moves an item to the inventory

@@ -37,6 +37,7 @@ namespace cmangos_module
         void OnLogOut(Player* player) override;
         void OnDeleteFromDB(uint32 playerId) override;
         void OnSetVisibleItemSlot(Player* player, uint8 slot, Item* item) override;
+        void OnInspectEquipment(Player* inspector, Player* subject) override;
         void OnMoveItemFromInventory(Player* player, Item* item) override;
         void OnEquipItem(Player* player, Item* item) override;
 
@@ -52,6 +53,8 @@ namespace cmangos_module
         bool ValidateRequest(const Player* player, const std::vector<std::pair<uint32, uint32>>& slots) const;
         bool CanUseTransmogNpc(Player* player) const;
         mutable std::recursive_mutex stateMutex;
+        uint32 equipmentSerial = 0;
+        void SendEquipmentStatus(const Player* recipient, Player* subject, const char* scope);
 
         void UpdateItemAppearance(Player* player, Item* item) const;
         uint32 GetTransmogAppearance(const Item* item) const;

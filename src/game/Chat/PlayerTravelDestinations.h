@@ -32,7 +32,7 @@ namespace PlayerTravel
         { "dire_maul_north", "Dire Maul: North", "dmn", 0, 2, true, 1, 429, 3189, -3521.29f, 1085.2f, 161.097f, 4.7281f },
         { "scholomance", "Scholomance", "scholo", 0, 2, true, 0, 289, 2567, 1269.64f, -2556.21f, 93.6088f, 0.620623f },
         { "stratholme", "Stratholme", "strat", 0, 2, true, 0, 329, 2214, 3352.92f, -3379.03f, 144.782f, 6.25978f },
-        { "molten_core", "Molten Core", "mc", 0, 2, true, 0, 409, 3528, -7179.34f, -921.212f, 165.821f, 5.09599f },
+        { "molten_core", "Molten Core", "mc", 0, 2, true, 0, 409, 3528, -7511.332520f, -1042.113159f, 180.912277f, 0.733098f },
         { "onyxias_lair", "Onyxia's Lair (level-60 version Classic/TBC; level-80 version WotLK)", "ony", 0, 2, true, 1, 249, 2848, -4708.27f, -3727.64f, 54.5589f, 3.72786f },
         { "blackwing_lair", "Blackwing Lair", "bwl", 0, 2, true, 0, 469, 3726, -7527.05f, -1226.77f, 285.732f, 5.29626f },
         { "zulgurub", "Zul'Gurub", "zg", 0, 2, true, 0, 309, 3928, -11916.7f, -1215.72f, 92.289f, 4.72454f },
