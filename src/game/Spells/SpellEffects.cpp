@@ -3802,6 +3802,8 @@ void Spell::EffectOpenLock(SpellEffectIndex eff_idx)
         if (Unit* owner = gameObjTarget->GetOwner())
             player->SetOutOfCombatWithVictim(owner);
 
+        gameObjTarget->RemoveFlag(GAMEOBJECT_FLAGS, GO_FLAG_LOCKED);
+
         SendLoot(gameObjTarget->GetObjectGuid(), LOOT_SKINNING, LockType(m_spellInfo->EffectMiscValue[eff_idx]));
         m_spellLog.AddLog(uint32(SPELL_EFFECT_OPEN_LOCK), gameObjTarget->GetPackGUID());
     }
@@ -6010,12 +6012,7 @@ void Spell::EffectScriptEffect(SpellEffectIndex eff_idx)
                 {
                     unitTarget->RemoveAurasDueToSpell(30657);   // Remove quake from all triggers
                     return;
-                }
-                case 30629:                                 // Debris - Magtheridon
-                {
-                    unitTarget->CastSpell(nullptr, 30630, TRIGGERED_OLD_TRIGGERED);
-                    return;
-                }               
+                }            
                 case 30834:                                 // Infernal Relay
                 {
                     if (!unitTarget)
